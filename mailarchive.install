@@ -1,0 +1,90 @@
+<?php
+// $Id: mailarchive.install,v 1.1 2007/08/08 05:18:07 jeremy Exp $
+
+/**
+ * Mailarchive module database schema.
+ * Copyright (c) 2007 Jeremy Andrews <jeremy@kerneltrap.org>.
+ * All rights reserved.
+ */
+function mailarchive_install() {
+  switch ($GLOBALS['db_type']) {
+    case 'mysql':
+    case 'mysqli':
+    default:
+       // Mailing list subscriptions are stored as nodes.
+      db_query("CREATE TABLE IF NOT EXISTS {mailarchive_subscriptions} (
+        sid int(11) UNSIGNED AUTO_INCREMENT,
+        nid int(11) UNSIGNED UNIQUE NOT NULL DEFAULT '0',
+        created int(11) UNSIGNED NOT NULL DEFAULT '0',
+        urlname varchar(255) NOT NULL DEFAULT '',
+        server_name varchar(255) NOT NULL DEFAULT '',
+        server_username varchar(255) NOT NULL DEFAULT '',
+        server_password varchar(255) NOT NULL DEFAULT '',
+        mailbox varchar(255) NOT NULL DEFAULT '',
+        protocol int(2) UNSIGNED NOT NULL DEFAULT '0',
+        port int(5) UNSIGNED NOT NULL DEFAULT '0',
+        delete_read int(1) UNSIGNED NOT NULL DEFAULT '0',
+        message_count int(11) UNSIGNED NOT NULL DEFAULT '0',
+        last_message int(11) UNSIGNED NOT NULL DEFAULT '0',
+        last_attempt int(11) UNSIGNED NOT NULL DEFAULT '0',
+        subscription_status int(1) UNSIGNED NOT NULL DEFAULT '0',
+        PRIMARY KEY (sid),
+        KEY last_message (last_message)
+      );");
+      // The actual mailing list messages.
+      db_query("CREATE TABLE IF NOT EXISTS {mailarchive_messages} (
+        mid int(11) UNSIGNED AUTO_INCREMENT,
+        sid int(11) UNSIGNED NOT NULL DEFAULT '0',
+        created int(11) UNSIGNED NOT NULL DEFAULT '0',
+        received int(11) UNSIGNED NOT NULL DEFAULT '0',
+        headers text NOT NULL DEFAULT '',
+        message_id varchar(255) NOT NULL DEFAULT '',
+        reference varchar(255) NOT NULL DEFAULT '',
+        in_reply_to varchar(255) NOT NULL DEFAULT '',
+        multiple_in_reply_to int(1) NOT NULL DEFAULT '0',
+        thread_id int(11) UNSIGNED NOT NULL DEFAULT '0',
+        sub_thread_id varchar(255) NOT NULL DEFAULT '0',
+        subject varchar(255) NOT NULL DEFAULT '',
+        body text NOT NULL DEFAULT '',
+        attachments int(3) UNSIGNED DEFAULT '0',
+        attachments_path varchar(255) NOT NULL DEFAULT '',
+        PRIMARY KEY (mid),
+        KEY (sid),
+        KEY (created),
+        KEY (received),
+        KEY (message_id),
+        KEY (thread_id),
+        KEY (sub_thread_id),
+        KEY (subject)
+      );");
+      // Attachment index.  Actual attachments stored in filesystem.
+      db_query("CREATE TABLE IF NOT EXISTS {mailarchive_messages_attachments} (
+        aid int(11) NOT NULL AUTO_INCREMENT,
+        sid int(11) NOT NULL DEFAULT '0',
+        mid int(11) NOT NULL DEFAULT '0',
+        name varchar(255) NOT NULL DEFAULT '',
+        bytes int(8) NOT NULL DEFAULT '0',
+        part int(3) NOT NULL DEFAULT '0',
+        PRIMARY KEY (aid),
+        KEY (sid),
+        KEY (mid)
+      );");
+      // Address index.
+      db_query("CREATE TABLE IF NOT EXISTS {mailarchive_messages_addresses} (
+        aid int(11) NOT NULL AUTO_INCREMENT,
+        sid int(11) UNSIGNED NOT NULL DEFAULT '0',
+        mid int(11) UNSIGNED NOT NULL DEFAULT '0',
+        name varchar(255) NOT NULL DEFAULT '',
+        mailbox varchar(255) NOT NULL DEFAULT '',
+        host varchar(255) NOT NULL DEFAULT '',
+        address varchar(255) NOT NULL DEFAULT '0',
+        address_type varchar(255) NOT NULL DEFAULT '0',
+        PRIMARY KEY (aid),
+        KEY (sid),
+        KEY (mid),
+        KEY (name),
+        KEY (address),
+        KEY (address_type)
+      );");
+  }
+}

@@ -1,0 +1,3 @@
+; $Id: mailarchive.info,v 1.1 2007/08/08 05:18:07 jeremy Exp $
+name = Mail Archive
+description = Online mailing list archives.
