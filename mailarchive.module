@@ -325,7 +325,7 @@ function mailarchive_form(&$node) {
     '#title' => t('Mailbox'),
     '#default_value' => isset($node->mailbox) ? $node->mailbox : 'INBOX',
     '#required' => TRUE,
-    '#description' => t('Enter the full path to your mailbox.  If connecting to a mail server with POP3 or IMAP the mailbox path will usually be <em>INBOX</em>.  If obtaining mail from a local file you should enter the absolute path to your mailbox, for example <em>/var/spool/mail/sample</em>.')
+    '#description' => t('Enter the full path to your mailbox.  If connecting to a mail server with POP3 or IMAP the mailbox path will usually be <em>INBOX</em>.  If obtaining mail from a local file you should enter the absolute path to your mailbox, for example <em>/var/spool/mail/sample</em>. (NOTE: Some versions of PHP\'s IMAP support are configured to not allow paths starting with <em>/</em> or containing <em>..</em> or <em>~</em>.  If you get an error about a file not existing that clearly does, try using paths relative to your mail directory.)')
   );
 
   $form['server']['protocol'] = array('#type' => 'radios',
@@ -604,25 +604,24 @@ function mailarchive_display_subscriptions($tid, $depth = 0) {
  * If archive, pass to theme_mailarchive_thread.
  */
 function mailarchive_view_mailarchive() {
-  //grab the archive (arg1) and the message_id if it exists (arg3)
+  // mailarchive / mailing-list-name / view   / message_id
+  // arg(0)      / arg(1)            / arg(2) / arg(3)
   $mailarchive = arg(1);
-  $op = arg(2);
   $messageid = arg(3);
   
-  if($messageid) {
-  	//there's a message id specified, so call the message display fucntion
-  	drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), mailarchive), l(t($mailarchive), 'mailarchive/'.$mailarchive.'/view')));
-    $output .= theme('mailarchive_message', $messageid);
+  if ($messageid) {
+    // Display only specified message.
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive .'/view')));
+    $output .= theme('mailarchive_message', $mailarchive, $messageid);
   }
-  else if($mailarchive) {
-  	//there's an archive specified, but no message id, so call single-archive display function
-  	drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), 'mailarchive')));
-  	$output .= theme('mailarchive_thread', $mailarchive, NULL, NULL, NULL);
+  else if ($mailarchive) {
+    // Display all threads in mailing list.
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), 'mailarchive')));
+    $output .= theme('mailarchive_thread', $mailarchive);
   }
   else {
-  	//no message id or mailarchive specified, so call mailarchive overview function
-  	//this shouldn't happen here, menu already points this to correct function
-  	mailarchive_page();
+    // No $messageid or $mailarchive, display overview of all mailing lists.
+    mailarchive_page();
   }
   return $output;
 }
@@ -718,21 +717,15 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
  * @param int $messageid
  * @return string $output
  */
-function theme_mailarchive_message ($messageid) {
-  drupal_set_title($messageid);
-  //get the message object from the database
-  $message = db_fetch_object(db_query("
-    SELECT m.mid, m.sid, m.received, m.subject, a.name, a.address, m.body, m.thread_id, m.sub_thread_id
-    FROM {mailarchive_messages} m 
-    INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid
-    WHERE m.mid = '%d' AND a.address_type = 'from'", $messageid));
+function theme_mailarchive_message ($mailarchive, $messageid) {
+  $message = db_fetch_object(db_query("SELECT m.mid, m.sid, m.received, m.subject, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.mid = '%d' AND a.address_type = 'from'", $messageid));
   
   //output the message header, body, list of other messages in thread, and footer
   $output .= '<div class="message-thread">';
-  $output .= theme('mailarchive_message_header', $message);
-  $output .= theme('mailarchive_message_body', $message);
-  $output .= theme('mailarchive_message_thread_messages', $message);
-  $output .= theme('mailarchive_message_footer', $message);
+  $output .= theme('mailarchive_message_header', $mailarchive, $message);
+  $output .= theme('mailarchive_message_body', $mailarchive, $message);
+  $output .= theme('mailarchive_message_thread_messages', $mailarchive, $message);
+  $output .= theme('mailarchive_message_footer', $mailarchive, $message);
   $output .= '</div>';
   $output .= "</div>\n";
  
@@ -745,15 +738,33 @@ function theme_mailarchive_message ($messageid) {
  * @param object $message
  * @return string $output
  */
-function theme_mailarchive_message_header($message) {
-  $fromAddress = db_fetch_object(db_query("SELECT address FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'to'", $message->mid));
-  $output = '<div class="message-header">';
-  $headers = t('<b>From: '.$message->address.'<br/>');
-  $headers .= t('To: '.$fromAddress->address.'<br/>');
-  $headers .= t('Subject: '.$message->subject.'<br/>');
-  $headers .= t('Date: '.format_date($message->received, 'short').'<br/>');
+function theme_mailarchive_message_header($mailarchive, $message) {
+  $tos = $ccs = array();
+  $result = db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'to'", $message->mid);
+  while ($to = db_fetch_object($result)) {
+    $tos[] = "$to->name &lt;$to->mailbox AT $to->host&gt;";
+  }
+  $result = db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'cc'", $message->mid);
+  while ($cc = db_fetch_object($result)) {
+    $ccs[] = "$cc->name &lt;$cc->mailbox AT $cc->host&gt;";
+  }
+
+  $output = "<div class=\"message-header\">\n";
+  $headers = '<div class="message-header from">';
+  $headers .= t('From: @from', array('@from' => "$message->name"));
+  $headers .= "</div>\n<div class=\"message-header to\">";
+  $headers .= t('To: !to', array('!to' => implode(', ', $tos)));
+  if (!empty($ccs)) {
+    $headers .= "</div>\n<div class=\"message-header cc\">";
+    $headers .= t('Cc: '. implode(', ', $ccs) .'<br/>');
+  }
+  $headers .= "</div>\n<div class=\"message-header subject\">";
+  $headers .= t('Subject: @subject', array('@subject' => $message->subject));
+  $headers .= "</div>\n<div class=\"message-header date\">";
+  $headers .= t('Date: @date', array('@date' => format_date($message->received, 'short')));
+  $headers .= "</div>\n";
   $output .= $headers;
-  $output .= "</b></div><br/>\n";
+  $output .= "</div><br/>\n";
   return $output;
 }
 
@@ -763,17 +774,17 @@ function theme_mailarchive_message_header($message) {
  * @param object $message
  * @return string $output
  */
-function theme_mailarchive_message_body($message) {
+function theme_mailarchive_message_body($mailarchive, $message) {
   $output = "<div class=\"message-body\">\n";
   //check if the message has a body - if not, output no-message string
-  if($message->body) {
-  	  //split message by the return character and insert <br>'s between each "line"
-  	  $lines = preg_split("/[\n]/",$message->body);
-  	  foreach($lines as $key => $value) {
-  	    $output .= $value.'<br>';
-  	  }
-  } else {
-  	$output .= t('[This message has no body]');
+  if ($message->body) {
+    // TODO: set this up with CSS
+    $output .= '<pre>';
+    $output .= $message->body;
+    $output .= '<pre>';
+  }
+  else {
+    $output .= t('[Empty message]');
   }
   $output .= "</div>\n";
   
@@ -786,43 +797,39 @@ function theme_mailarchive_message_body($message) {
  * @param object $message
  * @return string $output
  */
-function theme_mailarchive_message_thread_messages($message) {
-	$output = '<hr />';
-	$output .= "<div align = 'center'>Messages in Current Thread</div><br/>";
+function theme_mailarchive_message_thread_messages($mailarchive, $message) {
+  $output = '<div="current-thread"><hr />';
+  $output .= t('Messages in current thread:');
 	
-	//retrieve the messages in this thread and order by message id to retain the order received
-	$thread_messages = db_query(
-	   "SELECT m.mid, m.received, m.subject, a.mailbox, a.host, m.thread_id, m.sub_thread_id
-		FROM {mailarchive_subscriptions} s
-		INNER JOIN {mailarchive_messages} m ON s.sid = m.sid
-		INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid
-		WHERE m.thread_id = %d AND a.address_type = 'from'
-		ORDER BY m.mid ASC", $message->thread_id);
-	//grab the arhive urlname for use in the links
-	$arch = db_result(db_query('SELECT urlname FROM {mailarchive_subscriptions} WHERE sid = %d', $message->sid));
+  // List messages in this thread ordered by when received.
+  $result = db_query("SELECT m.mid, m.received, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.thread_id = %d AND a.address_type = 'from' ORDER BY m.mid ASC", $message->thread_id);
 	   
-	$output .= "<div class=\"message-list-thread\">\n";
-	while($thread_message = db_fetch_object($thread_messages)) {//while there are messages to display..
-		//check if no subject - if none, set to no subject
-		if($thread_message->subject == '') { $thread_message->subject = t('(no subject)'); }
-		//calculate the depth of the message
-		$message_depth = count(explode('.', $thread_message->sub_thread_id)) -1;
-		//put the from address together
-		$mailfrom = $thread_message->mailbox. "@" .$thread_message->host;
-		$output .= '<div class="message-list-thread-line" style="margin-left: '. ($message_depth * 15) .'px;">';
-		//if the message is this message, don't attach a link to the subject text, just output the text bolded
-		if($thread_message->mid == $message->mid) {
-			$output .= ' <span class="message-list-thread-subject"><b>'. strlen($thread_message->subject) > 62 ? "<b>" .substr(htmlspecialchars($thread_message->subject), 0, 60). "...</b></span>" : "<b>". htmlspecialchars($thread_message->subject) .'</b></span>';
-    	} else {
-			$output .= ' <span class="message-list-thread-subject">'. l(strlen($thread_message->subject) > 62 ? substr(htmlspecialchars($thread_message->subject), 0, 60). '...' : htmlspecialchars($thread_message->subject), "mailarchive/$arch/view/$thread_message->mid") .'</span>';
-    	}
-    	//output the rest of the information: who the message is from and the date received
-		$output .= ', <span class "message-list-thread-from">'. (strlen($mailfrom) > 24 ? substr(htmlspecialchars($mailfrom), 0, 20). '...' : htmlspecialchars($mailfrom)) .'</span>';
-    	$output .= ' <span class="message-list-thread-date">('. format_date($thread_message->received, 'custom', 'D M j, g:i a') .")</span>";
-    	$output .= "</div>\n";
-	}
-	$output .= '<br/>';
-	return $output;
+  $output .= "<div class=\"message-list-thread\">\n";
+  while($thread = db_fetch_object($result)) {
+    if (!$thread->subject) {
+      $thread->subject = t('[No subject]');
+    }
+    // Calculate the depth of the message.
+    $message_depth = count(explode('.', $thread->sub_thread_id)) -1;
+    $output .= '<div class="message-list-thread-line" style="margin-left: '. ($message_depth * 15) .'px;">';
+
+    // Truncate fields as necessary.
+    $subject = (strlen($thread->subject) > 62) ? substr(htmlspecialchars($thread->subject), 0, 60) .'...' : htmlspecialchars($thread->subject);
+    $from = (strlen($thread->name) > 24) ? substr(htmlspecialchars($thread->name), 0, 60) .'...' : htmlspecialchars($thread->name);
+
+    // If we are viewing this message, don't link it.
+    if ($thread->mid == $message->mid) {
+      $output .= "<span class=\"message-list-thread-subject\">$subject</span>";
+    } 
+    else {
+      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/view/$thread->mid", array('title' => $thread->subject)) .'</span>';
+    }
+    $output .= "<span class=\"message-list-thread-from\">, $from</span>";
+    $output .= '<span class="message-list-thread-date">, ('. format_date($thread->received, 'custom', 'D M j, g:i a') .")</span>";
+    $output .= "</div>\n";
+  }
+  $output .= '</div>';
+  return $output;
 }
 
 /**
@@ -831,7 +838,7 @@ function theme_mailarchive_message_thread_messages($message) {
  * @param object $message
  * @return string $output
  */
-function theme_mailarchive_message_footer($message) {
+function theme_mailarchive_message_footer($mailarchive, $message) {
 	$output .= '<hr/>';
 	//find the message id of the next and previous messages
 	$next = db_fetch_object(db_query("SELECT mid, subject FROM mailarchive_messages WHERE sub_thread_id = '1/' AND thread_id IN (
@@ -880,7 +887,7 @@ function mailarchive_admin_overview() {
           $rows[] = array(
             str_repeat('-', $term->depth + 1) .' '. l(htmlspecialchars($subscription->title), "mailarchive/$subscription->urlname/view"),
             (int)$subscription->message_count,
-            $subscription->last_message ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_message))) : t('none'),
+            $subscription->last_message ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_message))) : t('no messages'),
             $subscription->last_attempt ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_attempt))) : t('none'),
             $subscription->subscription_status ? t('enabled') : t('disabled'),
             l(t('edit'), "node/$subscription->nid/edit") .' | '.
@@ -1525,7 +1532,7 @@ function _mailarchive_time_since($time) {
     }
   }
 
-  $output = format_plural($count, "1 $name", "%count $name".'s');
+  $output = format_plural($count, "1 $name", "@count $name".'s');
 
   if ($i + 1 < $lookup_table_size) {
     // There's more pieces we can grab from the lookup table.
@@ -1572,17 +1579,23 @@ function _mailarchive_fetch($sid) {
       $username = '';
       $password = '';
       // Some quick sanity tests.
+      /**
+       * These cease to be useful when we switch to relative paths...
       if (!file_exists($connect)) {
         drupal_set_message(t('Mail file <em>%connect</em> does not exist.', array('%connect' => $connect)), 'error');
       }
-      elseif (!is_readable($connect)) {
+      else if (!is_readable($connect)) {
         drupal_set_message(t('Mail file <em>%connect</em> is not readable.', array('%connect' => $connect)), 'error');
       }
+      else if (!is_writable($connect)) {
+        drupal_set_message(t('Mail file <em>%connect</em> is not writable.', array('%connect' => $connect)));
+      }
+       */
       break;
   }
 
   // Make a connection to the mail server.
-  $stream = imap_open($connect, $username, $password);
+  $stream = imap_open($connect, $username, $password, OP_READONLY);
   if ($stream === FALSE) {
     drupal_set_message(t('Failed to download messages for <em>%list</em>, connection to mail server failed.  Please verify your mailing list archive configuration.', array('%server' => $subscription->server_name, '%list' => $subscription->title)), 'error');
     if ($alerts = imap_alerts()) {
