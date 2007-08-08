@@ -176,7 +176,8 @@ function mailarchive_menu($may_cache) {
       'weight' => -10);
     $items[] = array('path' => 'admin/content/mailarchive/add/category',
       'title' => t('Add category'),
-      'callback' => 'mailarchive_admin_category',
+      'callback' => 'drupal_get_form',
+      'callback arguments' => array('mailarchive_admin_category_form'),
       'access' => 'maintain mailing list archives',
       'type' => MENU_LOCAL_TASK);
     $items[] = array('path' => 'admin/content/mailarchive/configure',
@@ -240,7 +241,11 @@ function mailarchive_cron() {
  *  node/add#mailarchive to work.
  */
 function mailarchive_node_info() {
-  return array('mailarchive' => array('name' => t('mailing list archive'), 'base' => 'mailarchive'));
+  return array('mailarchive' => array(
+    'name' => t('mailing list archive'), 
+    'module' => 'mailarchive',
+    'description' => t('Subscribe to mailing lists to be archived.'),
+    'help' => t('Once you subscribe to mailing lists, messages sent to the list will be archived and displayed to visitors of your website.')));
 }
 
 /**
@@ -335,7 +340,7 @@ function mailarchive_form(&$node) {
     '#title' => t('Connection port'),
     '#default_value' => isset($node->port) ? $node->port : 110,
     '#required' => FALSE, // 'local file' does not require a port
-    '#description' => t('The remote port on the mail server that we connect to when downloading mailing list messages.  If connecting with POP3 this is usally port 110.  If connecting with Secure POP3 (pop3s) this is sually port 995.  If connectin with IMAP this is usually port 143.  If connecting with Secure IMAP (imaps) this is usually port 993.  This field can be left blank only if you will be obtaining mailing list messages from a local file.')
+    '#description' => t('The remote port on the mail server that we connect to when downloading mailing list messages.  If connecting with POP3 this is usally port 110.  If connecting with Secure POP3 (pop3s) this is sually port 995.  If connecting with IMAP this is usually port 143.  If connecting with Secure IMAP (imaps) this is usually port 993.  This field can be left blank only if you will be obtaining mailing list messages from a local file.')
   );
 
   $form['server']['delete_read'] = array('#type' => 'radios',
@@ -869,23 +874,24 @@ function mailarchive_admin_overview() {
   if ($tree) {
     foreach ($tree as $term) {
       if (in_array($term->tid, variable_get('mailarchive_categories', array()))) {
-        $rows[] = array(_taxonomy_depth($term->depth) .' '. check_plain($term->name), '', '', '', '', l(t('edit category'), "admin/mailarchive/edit/category/$term->tid"));
+        $rows[] = array(str_repeat('-', $term->depth) .' '. check_plain($term->name), '', '', '', '', l(t('edit category'), "admin/content/mailarchive/edit/category/$term->tid"));
         $result = db_query('SELECT s.sid, n.nid, n.title, s.message_count, s.last_message, s.last_attempt, s.subscription_status, s.urlname, t.tid FROM {term_node} t INNER JOIN {node} n ON t.nid = n.nid INNER JOIN {mailarchive_subscriptions} s ON n.nid = s.nid WHERE t.tid = %d', $term->tid);
         while ($subscription = db_fetch_object($result)) {
           $rows[] = array(
-            _taxonomy_depth($term->depth + 1) .' '. l(htmlspecialchars($subscription->title), "mailarchive/$subscription->urlname/view"),
-            $subscription->message_count,
+            str_repeat('-', $term->depth + 1) .' '. l(htmlspecialchars($subscription->title), "mailarchive/$subscription->urlname/view"),
+            (int)$subscription->message_count,
             $subscription->last_message ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_message))) : t('none'),
             $subscription->last_attempt ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_attempt))) : t('none'),
             $subscription->subscription_status ? t('enabled') : t('disabled'),
             l(t('edit'), "node/$subscription->nid/edit") .' | '.
-            l(t('fetch mail'), "admin/mailarchive/$subscription->urlname/fetch")
+            l(t('fetch mail'), "admin/content/mailarchive/$subscription->urlname/fetch")
           );
         }
       }
     }
   }
   else {
+    drupal_set_message('The mailarchive module currently requires that you create a taxonomy vocabulary for use with mailing list archives.');
   }
   return theme('table', $header, $rows);
 
@@ -895,10 +901,12 @@ function mailarchive_admin_overview() {
 /**
  * Returns a form for adding a mailing list category.
  */
-function mailarchive_admin_category($category = array()) {
+function mailarchive_admin_category_form($category = array()) {
   if ($_POST['op'] == t('Delete') || $_POST['edit']['confirm']) {
     return (_mailarchive_confirm_category_delete($category['tid']));
   }
+
+  $form = array();
 
   $form['name'] = array('#type' => 'textfield',
     '#title' => t('Category name'),
@@ -933,10 +941,10 @@ function mailarchive_admin_category($category = array()) {
     $form['tid'] = array('#type' => 'value', '#value' => $category['tid']);
   }
 
-  return drupal_get_form('mailarchive_admin_category', $form, 'mailarchive_category_form');
+  return $form;
 }
 
-function mailarchive_category_form_submit($form_id, $form_values) {
+function mailarchive_admin_category_form_submit($form_id, $form_values) {
   $status = taxonomy_save_term($form_values);
   switch ($status) {
     case SAVED_NEW:
@@ -946,9 +954,9 @@ function mailarchive_category_form_submit($form_id, $form_values) {
       drupal_set_message(t('Created new category %term.', array('%term' => theme('placeholder', $form_values['name']))));
       break;
     case SAVED_UPDATED:
-      drupal_set_message(t('The category %term has been updated.', array('%term' => theme('placeholder', $form_values['name']))));
+      drupal_set_message(t('The category @term has been updated.', array('@term' => theme('placeholder', $form_values['name']))));
   }
-  return 'admin/mailarchive';
+  return 'admin/content/mailarchive';
 }
 
 function theme_mailarchive_content($node, $teaser=FALSE) {
@@ -972,12 +980,16 @@ function theme_mailarchive_content($node, $teaser=FALSE) {
  * access control.
  */
 function mailarchive_admin_fetch() {
-  $urlname = arg(2);
-  $subscription = db_fetch_object(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $urlname));
-  if ($subscription->sid) {
-    _mailarchive_fetch($subscription->sid);
+  $urlname = arg(3);
+  $sid = (int)db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $urlname));
+  if ($sid) {
+    drupal_set_message(t('Fetching mail for mailing list %list.', array('%list' => arg(3))));
+    _mailarchive_fetch($sid);
   }
-  drupal_goto('admin/mailarchive');
+  else {
+    drupal_set_message(t('Mailing list %list does not exist.', array('%list' => arg(3))), 'error');
+  }
+  drupal_goto('admin/content/mailarchive');
 }
 
 /****** helper functions ******/
@@ -992,7 +1004,11 @@ function mailarchive_admin_fetch() {
  *  Subscription object.
  */
 function _mailarchive_subscription_load($sid) {
-  return db_fetch_object(db_query('SELECT s.*, n.title FROM {mailarchive_subscriptions} s INNER JOIN {node} n ON s.nid = n.nid WHERE sid = %d', $sid));
+  static $subscriptions = array();
+  if (!isset($subscriptions[$sid])) {
+    $subscriptions[$sid] = db_fetch_object(db_query('SELECT s.*, n.title FROM {mailarchive_subscriptions} s INNER JOIN {node} n ON s.nid = n.nid WHERE sid = %d', $sid));
+  }
+  return $subscriptions[$sid];
 }
 
 /**
@@ -1021,7 +1037,7 @@ function _mailarchive_parent_select($tid, $title) {
   if ($tree) {
     foreach ($tree as $term) {
       if (!in_array($term->tid, $exclude)) {
-        $options[$term->tid] = _taxonomy_depth($term->depth) . $term->name;
+        $options[$term->tid] = str_repeat('-', $term->depth) . $term->name;
       }
     }
   }
@@ -1046,7 +1062,7 @@ function _mailarchive_get_vid() {
     $vid = db_result(db_query("SELECT vid FROM {vocabulary} WHERE module = '%s'", 'mailarchive'));
     if (!$vid) {
       // No vid, so we create one.
-      $edit = array('name' => 'Mailing List Archives', 'multiple' => 0, 'required' => 1, 'hierarchy' => 1, 'relations' => 0, 'module' => 'mailarchive', 'nodes' => array('mailarchive' => 1));
+      $edit = array('name' => 'Mailing list archives', 'multiple' => 0, 'required' => 1, 'hierarchy' => 1, 'relations' => 0, 'module' => 'mailarchive', 'nodes' => array('mailarchive' => 1));
       taxonomy_save_vocabulary($edit);
       $vid = $edit['vid'];
     }
@@ -1067,7 +1083,7 @@ function _mailarchive_confirm_category_delete($tid) {
   $form['tid'] = array('#type' => 'value', '#value' => $tid);
   $form['name'] = array('#type' => 'value', '#value' => $term->name);
 
-  return confirm_form('mailarchive_confirm_category_delete', $form, t('Are you sure you want to delete the category %name?', array('%name' => theme('placeholder', $term->name))), 'admin/mailarchive', t('Deleting a category will delete all of the mailing list archives within the category and their messages.  This action may take a while, and cannot be undone.'), t('Delete'), t('Cancel'));
+  return confirm_form('mailarchive_confirm_category_delete', $form, t('Are you sure you want to delete the category %name?', array('%name' => theme('placeholder', $term->name))), 'admin/content/mailarchive', t('Deleting a category will delete all of the mailing list archives within the category and their messages.  This action may take a while, and cannot be undone.'), t('Delete'), t('Cancel'));
 }
 
 /**
@@ -1084,7 +1100,7 @@ function mailarchive_confirm_category_delete_submit($form_id, $form_values) {
   drupal_set_message(t('The category %term and all contained mailing lists have been deleted.', array('%term' => theme('placeholder', $form_values['name']))));
   watchdog('mailarchive', t('mailarchive: deleted %term category.', array('%term' => theme('placeholder', $form_values['name']))));
 
-  return 'admin/mailarchive';
+  return 'admin/content/mailarchive';
 }
 
 /**
@@ -1566,9 +1582,7 @@ function _mailarchive_fetch($sid) {
   }
 
   // Make a connection to the mail server.
-    	
   $stream = imap_open($connect, $username, $password);
-  
   if ($stream === FALSE) {
     drupal_set_message(t('Failed to download messages for <em>%list</em>, connection to mail server failed.  Please verify your mailing list archive configuration.', array('%server' => $subscription->server_name, '%list' => $subscription->title)), 'error');
     if ($alerts = imap_alerts()) {
