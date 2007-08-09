@@ -198,12 +198,25 @@ function mailarchive_menu($may_cache) {
           'type' => MENU_CALLBACK);
       }
     }
-    $mailarchive = arg(1);
-    $items[] = array('path' => "mailarchive/$mailarchive/view",
-      'type' => MENU_SUGGESTED_ITEM,
-      'callback' => 'mailarchive_view_mailarchive',
-      'access' => user_access('access mailing list archives')
-    );
+    if ($sid = _mailarchive_sid(arg(1))) {
+      $mailarchive = arg(1);
+      $items[] = array('path' => "mailarchive/$mailarchive",
+        'type' => MENU_SUGGESTED_ITEM,
+        'callback' => 'mailarchive_view_mailarchive',
+        'access' => user_access('access mailing list archives')
+      );
+      $mid = arg(2);
+      if (is_numeric($mid) && arg(3) == 'rethread') {
+        if ($thread_id = db_result(db_query('SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $sid, $mid))) {
+          $items[] = array('path' => "mailarchive/$mailarchive/$mid/rethread",
+            'type' => MENU_CALLBACK,
+            'callback' => '_mailarchive_rethread',
+            'callback arguments' => array($sid, $thread_id),
+            'access' => user_access('maintain mailing list archives')
+          );
+        }
+      }
+    }
     $mailarchive = arg(3);
     $items[] = array('path' => "admin/content/mailarchive/$mailarchive/fetch",
       'type' => MENU_SUGGESTED_ITEM,
@@ -546,13 +559,13 @@ function mailarchive_page($tid = 0) {
 
 /**
  * Display mailing list details for user overview page.
+ * TODO: Cleanup this function.
  */
 function mailarchive_display_subscriptions($tid, $depth = 0) {
-  //returns the subscriptions with the tid $tid (so tid=3 returns subscriptions in the gmail category
   $result = db_query('SELECT s.sid, s.urlname, n.nid, n.title, s.message_count, s.last_message, t.tid FROM {term_node} t INNER JOIN {node} n ON t.nid = n.nid INNER JOIN {mailarchive_subscriptions} s ON n.nid = s.nid WHERE t.tid = %d', $tid);
   while ($subscription = db_fetch_object($result)) {
     $description = '<div style="margin-left: '. (($depth) * 30) ."px;\">\n";
-    $description .= ' <div class="name">'. l($subscription->title, "mailarchive/$subscription->urlname/view") ."</div>\n";
+    $description .= ' <div class="name">'. l($subscription->title, "mailarchive/$subscription->urlname") ."</div>\n";
     $node = node_load($subscription->nid);
     if ($node->body) {
       $description .= ' <div class="description">'. filter_xss_admin($node->body) ."</div>\n";
@@ -560,29 +573,26 @@ function mailarchive_display_subscriptions($tid, $depth = 0) {
     if ($subscription->message_count) {
       $last_message = _mailarchive_time_since($subscription->last_message) .' ago';
       $mid = db_result(db_query('SELECT MAX(mid) FROM {mailarchive_messages} WHERE sid = %d GROUP BY sid', $subscription->sid));
-      $message = db_fetch_object(db_query('SELECT mid, subject FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $subscription->sid, $mid));
+      $message = db_fetch_object(db_query('SELECT mid, subject, received FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $subscription->sid, $mid));
       $from = db_fetch_object(db_query("SELECT aid, name, mailbox, host FROM {mailarchive_messages_addresses WHERE sid = %d AND mid = %d AND address_type = 'from'", $subscription->sid, $mid));
       if ($from->name) {
         $source = $from->name;
       }
       else {
-        $source = $from->mailbox .' AT '. $from->host;
+        $source = "$from->mailbox@...";
       }
       if (strlen($source) > 64) {
         $source = substr($source, 0, 61) .'...';
       }
-      //$last_message .= ' <div class="description">'. t('From: '). filter_xss_admin(l($source, "mailarchive/list/$from->aid/from"));
       $last_message .= ' <div class="description">'. t('From: '). filter_xss_admin($source);
       if ($message->subject) {
         if (strlen($message->subject) > 64) {
           $message->subject = substr($message->subject, 0, 61) .'...';
         }
-        //$last_message .= '<br /> '. t('Subject: '). filter_xss_admin(l($message->subject, "mailarchive/list/$message->mid/subject")) ."</div>\n";
-        $last_message .= '<br /> '. t('Subject: '). filter_xss_admin(l($message->subject, "mailarchive/$subscription->urlname/view/$message->mid")) ."</div>\n";
+        $last_message .= '<br /> '. t('Subject: '). filter_xss_admin(l($message->subject, "mailarchive/$subscription->urlname/$message->mid"));
       }
-      else {
-        $last_message .= " </div>\n";
-      }
+      $last_message .= '<br /> '. t('Date: '). format_date($message->received, 'custom', 'M j, g:i a Y');
+      $last_message .= " </div>\n";
     }
     else {
       $last_message = t('none');
@@ -604,14 +614,14 @@ function mailarchive_display_subscriptions($tid, $depth = 0) {
  * If archive, pass to theme_mailarchive_thread.
  */
 function mailarchive_view_mailarchive() {
-  // mailarchive / mailing-list-name / view   / message_id
-  // arg(0)      / arg(1)            / arg(2) / arg(3)
+  // mailarchive / mailing-list-name / message_id
+  // arg(0)      / arg(1)            / arg(2)
   $mailarchive = arg(1);
-  $messageid = arg(3);
+  $messageid = arg(2);
 
   if ($messageid) {
     // Display only specified message.
-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive .'/view')));
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive)));
     $output .= theme('mailarchive_message', $mailarchive, $messageid);
   }
   else if ($mailarchive) {
@@ -638,7 +648,7 @@ function mailarchive_view_mailarchive() {
 function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b = NULL) {
   $sid = _mailarchive_sid($mailarchive);
   if (!$sid) {
-    drupal_set_message(t('Invalid mailing list, %mailarchive.'), array('%mailarchive' => $mailarchive));
+    drupal_set_message(t('Unknown mailing list, %mailarchive.', array('%mailarchive' => $mailarchive)));
     drupal_goto('mailarchive');
   }
   drupal_set_title($mailarchive);
@@ -702,7 +712,7 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
       $message->subject = t('(No subject)');
     }
     $subject = '<div class="message-list-thread-line" style="margin-left: '. ($message->depth * 15) .'px;">';
-    $subject .= ' <span class="message-list-thread-subject">'. l($message->subject, "mailarchive/$mailarchive/view/$message->mid") .'</span>';
+    $subject .= ' <span class="message-list-thread-subject">'. l($message->subject, "mailarchive/$mailarchive/$message->mid") .'</span>';
     $subject .= "</div>\n";
     $row[] = $subject;
 
@@ -745,7 +755,7 @@ function theme_mailarchive_message ($mailarchive, $messageid) {
     $output .= "</div>\n";
   }
   else {
-    drupal_goto("mailarchive/$mailarchive/view");
+    drupal_goto("mailarchive/$mailarchive");
   }
  
   return $output;
@@ -841,7 +851,7 @@ function theme_mailarchive_message_thread_messages($mailarchive, $message) {
       $output .= "<span class=\"message-list-thread-subject\">$subject</span>";
     } 
     else {
-      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/view/$thread->mid", array('title' => $thread->subject)) .'</span>';
+      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/$thread->mid", array('title' => $thread->subject)) .'</span>';
     }
     $output .= "<span class=\"message-list-thread-from\">, $from</span>";
     $output .= '<span class="message-list-thread-date">, ('. format_date($thread->received, 'custom', 'D M j, g:i a') .")</span>";
@@ -871,14 +881,14 @@ function theme_mailarchive_message_footer($mailarchive, $message) {
   // TODO: Replace table with CSS.
   $output .= "<div align='center'><table border=0><tr><td width=150 align='right'>";
   if($prev->mid) {
-    $output .= l('< Previous Thread', "mailarchive/$mailarchive/view/$prev->mid", array('title' => $prev->subject));
+    $output .= l('< Previous Thread', "mailarchive/$mailarchive/$prev->mid", array('title' => $prev->subject));
   } 
   else {
     $output .= "< Previous Thread";	
   }
   $output .= "</td><td width=40></td><td width=150 align='left'>";
   if($next->mid) {
-    $output .= l('Next Thread >',"mailarchive/$mailarchive/view/$next->mid", array('title' => $next->subject));
+    $output .= l('Next Thread >',"mailarchive/$mailarchive/$next->mid", array('title' => $next->subject));
   } 
   else {
     $output .= "Next Thread >";
@@ -906,7 +916,7 @@ function mailarchive_admin_overview() {
         $result = db_query('SELECT s.sid, n.nid, n.title, s.message_count, s.last_message, s.last_attempt, s.subscription_status, s.urlname, t.tid FROM {term_node} t INNER JOIN {node} n ON t.nid = n.nid INNER JOIN {mailarchive_subscriptions} s ON n.nid = s.nid WHERE t.tid = %d', $term->tid);
         while ($subscription = db_fetch_object($result)) {
           $rows[] = array(
-            str_repeat('-', $term->depth + 1) .' '. l(htmlspecialchars($subscription->title), "mailarchive/$subscription->urlname/view"),
+            str_repeat('-', $term->depth + 1) .' '. l(htmlspecialchars($subscription->title), "mailarchive/$subscription->urlname"),
             (int)$subscription->message_count,
             $subscription->last_message ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_message))) : t('no messages'),
             $subscription->last_attempt ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_attempt))) : t('none'),
@@ -979,7 +989,7 @@ function mailarchive_admin_category_form_submit($form_id, $form_values) {
       $categories = variable_get('mailarchive_categories', array());
       $categories[] = $form_values['tid'];
       variable_set('mailarchive_categories', $categories);
-      drupal_set_message(t('Created new category %term.', array('%term' => theme('placeholder', $form_values['name']))));
+      drupal_set_message(t('Created new category %term.', array('%term' => $form_values['name'])));
       break;
     case SAVED_UPDATED:
       drupal_set_message(t('The category @term has been updated.', array('@term' => theme('placeholder', $form_values['name']))));
@@ -1305,7 +1315,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   foreach (array('from', 'to', 'cc') as $header_type) {
     if ($header->$header_type) {
       foreach ($header->$header_type as $id => $address) {
-        $existing = db_result(db_query("SELECT sid FROM {mailarchive_messages_addresses} WHERE sid = %d AND mid = %d AND name = '%s' AND mailbox = '%s' AND host = '%s' AND address_type = '%s'", $subscription->sid, $mid, _mailarchive_mime_decode($address->personal), _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), $header_type));
+        $existing = db_result(db_query("SELECT sid FROM {mailarchive_messages_addresses} WHERE sid = %d AND mid = %d AND mailbox = '%s' AND host = '%s' AND address_type = '%s'", $subscription->sid, $mid, _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), $header_type));
         if (!$existing) {
           // Prevent duplicates.
           db_query("INSERT INTO {mailarchive_messages_addresses} (sid, mid, name, mailbox, host, address, address_type) VALUES(%d, %d, '%s', '%s', '%s', '%s', '%s')", $subscription->sid, $mid, _mailarchive_mime_decode($address->personal), _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), _mailarchive_mime_decode($address->mailbox) .'@'. _mailarchive_mime_decode($address->host) , $header_type);
@@ -1337,6 +1347,7 @@ function _mailarchive_rethread($sid, $thread_id) {
   // Find the parent of this thread, if it exists.
   $parent = db_fetch_object(pager_query("SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = $sid AND thread_id = $thread_id", 1));
   if (!$parent->mid) {
+    drupal_set_message("Exiting, parent gone.");
     // No message exists with this thread_id, it must have been deleted 
     // underneath us.
     return;
@@ -1363,6 +1374,7 @@ function _mailarchive_rethread($sid, $thread_id) {
     }
 
     if ($parent->message_id) {
+      // TODO: What's the point of this?  $child isn't used anywhere...
       $child = $parent;
     }
     else {
@@ -1391,14 +1403,16 @@ function _mailarchive_rethread($sid, $thread_id) {
  */
 function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $parent) {
   static $history = array();
-  if (in_array($parent->mid, $history)) {
+  if ($history[$parent->mid] == $sub_thread_id) {
     // There's something wrong with this thread, it's pointing back to itself,
     // we exit now as there's no good algorithm for threading an infinite loop.
     return;
   }
   else {
-    $history[] = $parent->mid;
+    $history[$parent->mid] = $sub_thread_id;
   }
+
+  db_query('UPDATE {mailarchive_messages} SET thread_id = %d, sub_thread_id = "%s/" WHERE sid = %d AND message_id = "%s"', $thread_id, $sub_thread_id, $sid, $parent->message_id);
 
   // Find all children of the current parent.
   $result = db_query("SELECT mid, message_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%')", $sid, $parent->message_id, $parent->message_id);
@@ -1596,8 +1610,8 @@ function _mailarchive_fetch($sid) {
   $subscription = _mailarchive_subscription_load($sid);
 
   // Attempt to increase the allowed amount of time for downloading messages
-  // from the default of 30 seconds to a full 2 minutes.
-  set_time_limit(120);
+  // from the default of 30 seconds to a full 5 minutes.
+  set_time_limit(300);
 
   // Prepare a connection to the mail server
   $username = $subscription->server_username;
