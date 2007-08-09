@@ -636,6 +636,11 @@ function mailarchive_view_mailarchive() {
  * @return unknown
  */
 function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b = NULL) {
+  $sid = _mailarchive_sid($mailarchive);
+  if (!$sid) {
+    drupal_set_message(t('Invalid mailing list, %mailarchive.'), array('%mailarchive' => $mailarchive));
+    drupal_goto('mailarchive');
+  }
   drupal_set_title($mailarchive);
   $order = isset($_GET['order']) ? $_GET['order'] : '';
   
@@ -673,40 +678,41 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
   );
   
   // Get list of messages in current group.
-  $sql = "SELECT m.mid, m.received, m.subject, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_subscriptions} s INNER JOIN {mailarchive_messages} m ON s.sid = m.sid INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE s.urlname = '". $mailarchive ."' AND a.address_type = 'from'";
+  $sql = "SELECT m.mid, m.received, m.subject, a.name, a.mailbox, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from' AND m.sid = $sid";
   $sql .= tablesort_sql($header) .', m.mid ASC';
-  $result = pager_query($sql, $messages_per_page, 0, "SELECT COUNT(m.thread_id) FROM {mailarchive_messages} m INNER JOIN {mailarchive_subscriptions} s ON m.sid = s.sid WHERE s.urlname = '%s'", $mailarchive);
+  $result = pager_query($sql, $messages_per_page, 0, "SELECT COUNT(m.thread_id) FROM {mailarchive_messages} m WHERE m.sid = %d", $sid);
   
   $output .= "<div class=\"message-list-thread\" id =\"message-list-$mailarchive\">\n";
   while ($message = db_fetch_object($result)) {
     $row = array();
-    if($message->subject == '') {
-      $message->subject = t('(no subject)');
-    }
-    // We thread if displaying by subject.  We can't thread if displaying by
-    // From or Date.
+
+    // We only indent threads if ordered by subject, otherwise we're not really
+    // displaying threads.
     if (!$order || $order == t('Subject')) {
       $message->depth = count(explode('.', $message->sub_thread_id)) -1;
-      if($message->depth ==0) {
-        $output .= '<div class="message-list-thread-thread">';
-      }
     }
-    $mailfrom = $message->name;
 
     // Subject row:
+    if ($message->subject) {
+      if (strlen($message->subject) > 62) {
+        $message->subject = substr(htmlspecialchars($message->subject), 0, 60) .'...';
+      }
+    }
+    else {
+      $message->subject = t('(No subject)');
+    }
     $subject = '<div class="message-list-thread-line" style="margin-left: '. ($message->depth * 15) .'px;">';
-    $subject .= ' <span class="message-list-thread-subject">'. l(strlen($message->subject) > 62 ? substr(htmlspecialchars($message->subject), 0, 60). '...' : htmlspecialchars($message->subject), "mailarchive/$mailarchive/view/$message->mid") .'</span>';
+    $subject .= ' <span class="message-list-thread-subject">'. l($message->subject, "mailarchive/$mailarchive/view/$message->mid") .'</span>';
+    $subject .= "</div>\n";
     $row[] = $subject;
 
     // From row:
-    $row[] = ' <span class "message-list-thread-from">'. (strlen($mailfrom) > 24 ? substr(htmlspecialchars($mailfrom), 0, 20). '...' : htmlspecialchars($mailfrom)) .'</span>';
+    $mailfrom = $message->name ? $message->name : $message->mailbox;
+    $row[] = (strlen($mailfrom) > 24 ? substr(htmlspecialchars($mailfrom), 0, 20). '...' : htmlspecialchars($mailfrom));
 
-    // Date row:
-    $date = '<span class="message-list-thread-date">('. format_date($message->received, 'custom', 'D M j, g:i a') .")</span>\n</div>\n";
-    if($message->depth == 0) {
-    	$date .= '</div>';
-    }
-    $row[] = $date;
+    // Date row
+    $row[] = format_date($message->received, 'custom', 'M j, g:i a Y');
+
     $rows[] = $row;
   }
 
@@ -724,19 +730,21 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
  * @return string $output
  */
 function theme_mailarchive_message ($mailarchive, $messageid) {
+  // TODO: Optimize -- this is a performance killer.
   $message = db_fetch_object(db_query("SELECT m.mid, m.sid, m.received, m.subject, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {mailarchive_subscriptions} s INNER JOIN {mailarchive_messages} m ON s.sid = m.sid INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid AND s.urlname = '%s' WHERE m.mid = '%d' AND a.address_type = 'from'", $mailarchive, $messageid));
+  drupal_set_title($message->subject);
 
   if (!empty($message)) {
     $output .= '<div class="message-thread">';
     $output .= theme('mailarchive_message_header', $mailarchive, $message);
     $output .= theme('mailarchive_message_body', $mailarchive, $message);
     $output .= theme('mailarchive_message_thread_messages', $mailarchive, $message);
-    $output .= theme('mailarchive_message_footer', $mailarchive, $message);
+    // TODO: This query has awful performance, fix it then re-enable.
+    //$output .= theme('mailarchive_message_footer', $mailarchive, $message);
     $output .= '</div>';
     $output .= "</div>\n";
   }
   else {
-    drupal_set_message("got to this point, fool.");
     drupal_goto("mailarchive/$mailarchive/view");
   }
  
@@ -753,16 +761,16 @@ function theme_mailarchive_message_header($mailarchive, $message) {
   $tos = $ccs = array();
   $result = db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'to'", $message->mid);
   while ($to = db_fetch_object($result)) {
-    $tos[] = "$to->name &lt;$to->mailbox AT $to->host&gt;";
+    $tos[] = "$to->name &lt;$to->mailbox@...&gt;";
   }
   $result = db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'cc'", $message->mid);
   while ($cc = db_fetch_object($result)) {
-    $ccs[] = "$cc->name &lt;$cc->mailbox AT $cc->host&gt;";
+    $ccs[] = "$cc->name &lt;$cc->mailbox@...&gt;";
   }
 
   $output = "<div class=\"message-header\">\n";
   $headers = '<div class="message-header from">';
-  $headers .= t('From: @from', array('@from' => "$message->name"));
+  $headers .= t('From: !from', array('!from' => "$message->name &lt;$message->mailbox@...&gt;"));
   $headers .= "</div>\n<div class=\"message-header to\">";
   $headers .= t('To: !to', array('!to' => implode(', ', $tos)));
   if (!empty($ccs)) {
@@ -791,7 +799,7 @@ function theme_mailarchive_message_body($mailarchive, $message) {
   if ($message->body) {
     // TODO: set this up with CSS
     $output .= '<pre>';
-    $output .= $message->body;
+    $output .= htmlentities($message->body);
     $output .= '<pre>';
   }
   else {
@@ -844,39 +852,41 @@ function theme_mailarchive_message_thread_messages($mailarchive, $message) {
 }
 
 /**
- * outputs the message footer. footer provides links to the next and previous threads in the current archive
+ * Provides links to the next and previous threads in the current archive
  *
  * @param object $message
  * @return string $output
  */
 function theme_mailarchive_message_footer($mailarchive, $message) {
-	$output .= '<hr/>';
-	//find the message id of the next and previous messages
-	$next = db_fetch_object(db_query("SELECT mid, subject FROM mailarchive_messages WHERE sub_thread_id = '1/' AND thread_id IN (
-			SELECT MIN(thread_id) AS thread_id FROM mailarchive_messages WHERE sid = %d AND thread_id > %d)", $message->sid, $message->thread_id));
-	$prev = db_fetch_object(db_query("SELECT mid, subject FROM mailarchive_messages WHERE sub_thread_id = '1/' AND thread_id IN (
-			SELECT MAX(thread_id) AS thread_id FROM mailarchive_messages WHERE sid = %d AND thread_id < %d)", $message->sid, $message->thread_id));
-	//grab the archive urlname of the archive we are currently in
-	$arch = db_fetch_object(db_query('SELECT urlname FROM {mailarchive_subscriptions} WHERE sid = %d', $message->sid));
+  $output = '<div class="message-footer" >';
+  $output .= '<hr/>';
+
+  // Find the message ids of the previous and next messages.
+  $prev = db_fetch_object(db_query("SELECT mid, subject FROM mailarchive_messages WHERE sub_thread_id = '1/' AND thread_id IN ( SELECT MAX(thread_id) AS thread_id FROM mailarchive_messages WHERE sid = %d AND thread_id < %d)", $message->sid, $message->thread_id));
+  $next = db_fetch_object(db_query("SELECT mid, subject FROM mailarchive_messages WHERE sub_thread_id = '1/' AND thread_id IN ( SELECT MIN(thread_id) AS thread_id FROM mailarchive_messages WHERE sid = %d AND thread_id > %d)", $message->sid, $message->thread_id));
+
+  // Output the links to the next and previous messages if there are next and 
+  // previous messages if one of them doesn't exist, then just use the text 
+  // with no link.
+  // TODO: Replace table with CSS.
+  $output .= "<div align='center'><table border=0><tr><td width=150 align='right'>";
+  if($prev->mid) {
+    $output .= l('< Previous Thread', "mailarchive/$mailarchive/view/$prev->mid", array('title' => $prev->subject));
+  } 
+  else {
+    $output .= "< Previous Thread";	
+  }
+  $output .= "</td><td width=40></td><td width=150 align='left'>";
+  if($next->mid) {
+    $output .= l('Next Thread >',"mailarchive/$mailarchive/view/$next->mid", array('title' => $next->subject));
+  } 
+  else {
+    $output .= "Next Thread >";
+  }
+  $output .= "</td></tr></table>";
 	
-	//output the links to the next and previous messages if there are next and previous messages
-	//if one of them doesn't exist, then just use the text with no link
-	$output .= "<div align='center'><table border=0><tr><td width=150 align='right'>";
-	if($prev->mid) {
-		$output .= l('< Previous Thread', "mailarchive/$arch->urlname/view/$prev->mid");
-	} else {
-		$output .= "< Previous Thread";	
-	}
-	$output .= "</td><td width=40></td><td width=150 align='left'>";
-	if($next->mid) {
-		$output .= l('Next Thread >',"mailarchive/$arch->urlname/view/$next->mid");
-	} else {
-		$output .= "Next Thread >";
-	}
-	$output .= "</td></tr></table>";
-	
-	$output .= '</div>';
-	return $output;
+  $output .= '</div>';
+  return $output;
 }
 
 /**
@@ -1001,7 +1011,6 @@ function mailarchive_admin_fetch() {
   $urlname = arg(3);
   $sid = (int)db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $urlname));
   if ($sid) {
-    drupal_set_message(t('Fetching mail for mailing list %list.', array('%list' => arg(3))));
     _mailarchive_fetch($sid);
   }
   else {
@@ -1027,6 +1036,17 @@ function _mailarchive_subscription_load($sid) {
     $subscriptions[$sid] = db_fetch_object(db_query('SELECT s.*, n.title FROM {mailarchive_subscriptions} s INNER JOIN {node} n ON s.nid = n.nid WHERE sid = %d', $sid));
   }
   return $subscriptions[$sid];
+}
+
+/**
+ * Retrieve the sid
+ */
+function _mailarchive_sid($mailarchive) {
+  static $sids = array();
+  if (!isset($sids[$mailarchive])) {
+    $sids[$mailarchive] = db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $mailarchive));
+  }
+  return $sids[$mailarchive];
 }
 
 /**
@@ -1165,6 +1185,11 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   // Attempt to grab the message reference, if existing
   $reference = rtrim(ltrim(substr(strrchr($header->reference, '<'), 0), '<'), '>');
 
+/*
+echo '<pre>';
+print_r($header);
+echo '</pre>';
+*/
   // Attempt to grab the message_id (everything within the first set of <>'s)
   preg_match("/<[^<^>]*/", $header->message_id, $message_id);
   $message_id = ltrim($message_id[0], '<');
@@ -1190,7 +1215,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
     $in_reply_to = implode(',', $in_reply_to);
   }
 
-  $duplicate_message = db_fetch_object(db_query("SELECT sid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
+  $duplicate_message = db_result(db_query("SELECT sid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
   if ($duplicate_message) {
     // We've downloaded this message before, maybe we're re-indexing.  Ignore.
     return 0;
@@ -1200,12 +1225,12 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   // module for details on how this works.
   if ($reference || $in_reply_to) {
     if ($multiple_in_reply_to) {
-      foreach ($in_reply_to as $message_id) {
-        $parent = db_fetch_object(db_query("SELECT MAX(thread_id) AS thread_id, MAX(sub_thread_id) AS sub_thread_id FROM {mailarchive_messages} WHERE sid = %d and message_id = '%s'", $subscription->sid, $message_id));
+      foreach ($in_reply_to as $reply_message_id) {
+        $parent = db_fetch_object(db_query("SELECT MAX(thread_id) AS thread_id, MAX(sub_thread_id) AS sub_thread_id FROM {mailarchive_messages} WHERE sid = %d and message_id = '%s'", $subscription->sid, $reply_message_id));
         if ($parent->thread_id) {
           // We found a valid parent that we are in_reply_to.
-          $in_reply_to = $message_id;
-          $multiple_in_reply_tos = 0;
+          $in_reply_to = $reply_message_id;
+          $multiple_in_reply_to = 0;
         }
       }
     }
@@ -1215,7 +1240,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
     }
     else {
       // Look for parent referenced in reference.
-      $parent = db_fetch_object(db_query('SELECT MAX(thread_id) AS thread_id, MAX(sub_thread_id) AS sub_thread_id FROM {mail_archive_message_index} WHERE sid = %d AND message_id LIKE "%%%s%%"', $subscription->sid, $reference));
+      $parent = db_fetch_object(db_query('SELECT MAX(thread_id) AS thread_id, MAX(sub_thread_id) AS sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id LIKE "%%%s%%"', $subscription->sid, $reference));
     }
   }
 
@@ -1257,7 +1282,12 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   if ($multiple_in_reply_to) {
     // in_reply_to is an array, collapse it into a comma seperated list so we
     // can store it in the database.
-    $in_reply_to = implode(',', $in_reply_to);
+    if (is_array($in_reply_to)) {
+      $in_reply_to = implode(',', $in_reply_to);
+    }
+    else {
+      $multiple_in_reply_to = 0;
+    }
   }
 
   // Grab the message body.
@@ -1266,8 +1296,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
 
   // Save the new message.
   db_query("INSERT INTO {mailarchive_messages} (sid, created, received, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, subject, body, attachments) VALUES (%d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', %d)", $subscription->sid, time(), $header->udate, serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
-  $m = db_fetch_object(db_query("SELECT mid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
-  $mid = $m->mid; // Used in address index
+  $mid = db_result(db_query("SELECT mid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
 
   // If enabled, download any attachments.
   if (variable_get('mailarchive_save_attachments', 0)) {
@@ -1281,7 +1310,11 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   foreach (array('from', 'to', 'cc') as $header_type) {
     if ($header->$header_type) {
       foreach ($header->$header_type as $id => $address) {
-        db_query("INSERT INTO {mailarchive_messages_addresses} (sid, mid, name, mailbox, host, address, address_type) VALUES(%d, %d, '%s', '%s', '%s', '%s', '%s')", $subscription->sid, $mid, _mailarchive_mime_decode($address->personal), _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), _mailarchive_mime_decode($address->mailbox) .'@'. _mailarchive_mime_decode($address->host) , $header_type);
+        $existing = db_result(db_query("SELECT sid FROM {mailarchive_messages_addresses} WHERE sid = %d AND mid = %d AND name = '%s' AND mailbox = '%s' AND host = '%s' AND address_type = '%s'", $subscription->sid, $mid, _mailarchive_mime_decode($address->personal), _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), $header_type));
+        if (!$existing) {
+          // Prevent duplicates.
+          db_query("INSERT INTO {mailarchive_messages_addresses} (sid, mid, name, mailbox, host, address, address_type) VALUES(%d, %d, '%s', '%s', '%s', '%s', '%s')", $subscription->sid, $mid, _mailarchive_mime_decode($address->personal), _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), _mailarchive_mime_decode($address->mailbox) .'@'. _mailarchive_mime_decode($address->host) , $header_type);
+        }
       }
     }
   }
@@ -1307,7 +1340,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
  */
 function _mailarchive_rethread($sid, $thread_id) {
   // Find the parent of this thread, if it exists.
-  $parent = db_fetch_object(pager_query("SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id WHERE sid = $sid AND thread_id = $thread_id", 1));
+  $parent = db_fetch_object(pager_query("SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = $sid AND thread_id = $thread_id", 1));
   if (!$parent->mid) {
     // No message exists with this thread_id, it must have been deleted 
     // underneath us.
@@ -1319,7 +1352,7 @@ function _mailarchive_rethread($sid, $thread_id) {
     if ($child->multiple_in_reply_to) {
       $in_reply_to = explode(',', $child->in_reply_to);
       foreach ($in_reply_to as $i) {
-        $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id WHERE sid = %d AND thread_id = %d', $sid, $i));
+        $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d', $sid, $i));
         if ($parent->thread_id) {
           // We've located the valid in_reply_to.
           db_query("UPDATE {mailarchive_messages} SET in_reply_to = '%s', multiple_in_reply_to = 0 WHERE sid = %d AND mid = %d", $i, $sid, $parent->mid);
@@ -1373,7 +1406,7 @@ function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $pare
   }
 
   // Find all children of the current parent.
-  $result = db_query("SELECT mid, message_id FROM {mail_archive_message_index} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%')", $sid, $parent->message_id, $parent->message_id);
+  $result = db_query("SELECT mid, message_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%')", $sid, $parent->message_id, $parent->message_id);
   $parent_subid = $sub_thread_id;
   $sub_thread_id = $sub_thread_id .'.1';
 
@@ -1457,11 +1490,11 @@ function _mailarchive_extract_attachments($subscription, $mid, $stream, $message
       // Non-text attachment, decode it.
       $attachment = imap_base64($attachment);
     }
-    if (file_save_data($attachment, $attachments_path .'/'. $details->parameters[0]->value)) {
+    if (file_save_data($attachment, "$attachments_path/attachment.$part")) {
       $attachments++;
     }
     // Add attachment details to database.
-    db_query("INSERT INTO {mailarchive_messages_attachments} (sid, mid, name, bytes, part) VALUES(%d, %d, '%s', %d, %d)", $subscription->sid, $mid, $details->parameters[0]->value, $details->bytes, $part);
+    db_query("INSERT INTO {mailarchive_messages_attachments} (sid, mid, name, bytes, part) VALUES(%d, %d, '%s', %d, %d)", $subscription->sid, $mid, "$attachment.$part", $details->bytes, $part);
   }
   db_query("UPDATE {mailarchive_messages} SET attachments = %d, attachments_path = '%s' WHERE sid = %d AND mid = %d", $attachments, $attachments_path, $subscription->sid, $mid);
   return $attachments;
@@ -1567,6 +1600,10 @@ function _mailarchive_time_since($time) {
 function _mailarchive_fetch($sid) {
   $subscription = _mailarchive_subscription_load($sid);
 
+  // Attempt to increase the allowed amount of time for downloading messages
+  // from the default of 30 seconds to a full 2 minutes.
+  set_time_limit(120);
+
   // Prepare a connection to the mail server
   $username = $subscription->server_username;
   $password = $subscription->server_password;
@@ -1590,8 +1627,6 @@ function _mailarchive_fetch($sid) {
       $username = '';
       $password = '';
       // Some quick sanity tests.
-      /**
-       * These cease to be useful when we switch to relative paths...
       if (!file_exists($connect)) {
         drupal_set_message(t('Mail file <em>%connect</em> does not exist.', array('%connect' => $connect)), 'error');
       }
@@ -1601,12 +1636,11 @@ function _mailarchive_fetch($sid) {
       else if (!is_writable($connect)) {
         drupal_set_message(t('Mail file <em>%connect</em> is not writable.', array('%connect' => $connect)));
       }
-       */
       break;
   }
 
   // Make a connection to the mail server.
-  $stream = imap_open($connect, $username, $password, OP_READONLY);
+  $stream = imap_open($connect, $username, $password);
   if ($stream === FALSE) {
     drupal_set_message(t('Failed to download messages for <em>%list</em>, connection to mail server failed.  Please verify your mailing list archive configuration.', array('%server' => $subscription->server_name, '%list' => $subscription->title)), 'error');
     if ($alerts = imap_alerts()) {
@@ -1634,6 +1668,8 @@ function _mailarchive_fetch($sid) {
     }
     for ($message = 1; $message <= $messages_to_download; $message++) {
       $header = imap_headerinfo($stream, $message);
+/*
+  TODO: Make this configurable.
       if ($header->Unseen != 'U' && $header->Recent != 'N') {
         if ($subscription->delete_read) {
           // Mark message for deletion.
@@ -1644,6 +1680,8 @@ function _mailarchive_fetch($sid) {
       }
       // Save the message.
       elseif (_mailarchive_message_save($subscription, $stream, $header, $message)) {
+*/
+      if (_mailarchive_message_save($subscription, $stream, $header, $message)) {
         $messages_downloaded++;
         if ($subscription->delete_read) {
           // Mark message for deletion.
