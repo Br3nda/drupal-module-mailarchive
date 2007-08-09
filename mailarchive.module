@@ -682,11 +682,12 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
   $output = "<div class=\"message-list\" id=\"message-list-$mailarchive\">\n";
 
   $header = array(
-    array('data' => t('Subject'), 'field' => 'm.thread_id', 'sort' => 'asc'),
+    array('data' => t('Subject'), 'field' => 'm.thread_id', 'sort' => 'desc'),
     array('data' => t('From'), 'field' => 'a.name'),
     array('data' => t('Date'), 'field' => 'm.received')
   );
   
+  // TODO: Fix this to be threaded and sorted properly.
   // Get list of messages in current group.
   $sql = "SELECT m.mid, m.received, m.subject, a.name, a.mailbox, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from' AND m.sid = $sid";
   $sql .= tablesort_sql($header) .', m.sub_thread_id DESC';
@@ -1187,9 +1188,6 @@ function _mailarchive_delete_subscription($sid) {
  *  If successfully saved, the message id if the new message.
  */
 function _mailarchive_message_save($subscription, $stream, $header, $message) {
-  // Retrieve body section 1 from message
-  $bodystruct = imap_bodystruct($stream, $message, 1);
-
   // TODO: lock mailarchive_messages table
   
   // Attempt to grab the message reference, if existing
@@ -1446,12 +1444,13 @@ function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $pare
  */
 function _mailarchive_mime_decode($mime) {
   $decoded = imap_mime_header_decode($mime);
-  $decoded = $decoded[0]->text;
-  if ($decoded) {
-    return $decoded;
-  }
-  else {
-    return $mime;
+  for ($i = 0; $i < count($decoded); $i++) {
+    if ($decoded[$i]->charset != 'default') {
+      return drupal_convert_to_utf8($decoded[$i]->text, $decoded[$i]->charset);
+    }
+    else {
+      return $decoded[$i]->text;
+    }
   }
 }
 
@@ -1525,14 +1524,19 @@ function _mailarchive_extract_attachments($subscription, $mid, $stream, $message
 function _mailarchive_get_message_body($stream, $message, $structure, $part = 1) {
   if (!empty($structure)) {
     $body = imap_fetchbody($stream, $message, $part);
-    if ($structure->encoding == 3) { // Transfer encoding: 3 = base64
-      return imap_base64($body);
+    foreach ($structure->parameters as $parameter) {
+      if (strtoupper($parameter->attribute) == 'CHARSET') {
+        $encoding = $parameter->value;
+        break;
+      }
     }
-    elseif ($structure->encoding == 4) { // 4 = quoted-printable
-      return imap_qprint($body);
-    }
-    else {
-      return $body;
+    switch ($structure->encoding) {
+      case 3: // base64
+        return drupal_convert_to_utf8(imap_base64($body), $encoding);
+      case 4: // quoted-printable
+        return drupal_convert_to_utf8(quoted_printable_decode($body), $encoding);
+      default:
+        return drupal_convert_to_utf8($body, $encoding);
     }
 
     if ($structure->type == 1) { // Primary body type: 1 = multipart
@@ -1541,7 +1545,9 @@ function _mailarchive_get_message_body($stream, $message, $structure, $part = 1)
           $prefix = $part .'.';
         }
         if ($body = _mailarchive_get_message_body($stream, $message, $substructure, $prefix . ($index + 1))) {
-          return $body;
+          if ($body) {
+            return $body;
+          }
         }
       }
     }
