@@ -679,7 +679,7 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
   
   // Get list of messages in current group.
   $sql = "SELECT m.mid, m.received, m.subject, a.name, a.mailbox, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from' AND m.sid = $sid";
-  $sql .= tablesort_sql($header) .', m.mid ASC';
+  $sql .= tablesort_sql($header) .', m.sub_thread_id DESC';
   $result = pager_query($sql, $messages_per_page, 0, "SELECT COUNT(m.thread_id) FROM {mailarchive_messages} m WHERE m.sid = %d", $sid);
   
   $output .= "<div class=\"message-list-thread\" id =\"message-list-$mailarchive\">\n";
@@ -821,7 +821,7 @@ function theme_mailarchive_message_thread_messages($mailarchive, $message) {
   $output .= '<b>'. t('Messages in current thread:') .'</b>';
 	
   // List messages in this thread ordered by when received.
-  $result = db_query("SELECT m.mid, m.received, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = %d AND m.thread_id = %d AND a.address_type = 'from' ORDER BY m.mid ASC", $message->sid, $message->thread_id);
+  $result = db_query("SELECT m.mid, m.received, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = %d AND m.thread_id = %d AND a.address_type = 'from' ORDER BY m.sub_thread_id DESC", $message->sid, $message->thread_id);
 	   
   $output .= "<div class=\"message-list-thread\">\n";
   while($thread = db_fetch_object($result)) {
@@ -1185,11 +1185,6 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   // Attempt to grab the message reference, if existing
   $reference = rtrim(ltrim(substr(strrchr($header->reference, '<'), 0), '<'), '>');
 
-/*
-echo '<pre>';
-print_r($header);
-echo '</pre>';
-*/
   // Attempt to grab the message_id (everything within the first set of <>'s)
   preg_match("/<[^<^>]*/", $header->message_id, $message_id);
   $message_id = ltrim($message_id[0], '<');
