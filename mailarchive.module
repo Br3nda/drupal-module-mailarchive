@@ -682,7 +682,7 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
   $output = "<div class=\"message-list\" id=\"message-list-$mailarchive\">\n";
 
   $header = array(
-    array('data' => t('Subject'), 'field' => 'm.thread_id', 'sort' => 'desc'),
+    array('data' => t('Subject'), 'field' => 'm.thread_id', 'sort' => 'asc'),
     array('data' => t('From'), 'field' => 'a.name'),
     array('data' => t('Date'), 'field' => 'm.received')
   );
@@ -1347,7 +1347,6 @@ function _mailarchive_rethread($sid, $thread_id) {
   // Find the parent of this thread, if it exists.
   $parent = db_fetch_object(pager_query("SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = $sid AND thread_id = $thread_id", 1));
   if (!$parent->mid) {
-    drupal_set_message("Exiting, parent gone.");
     // No message exists with this thread_id, it must have been deleted 
     // underneath us.
     return;
