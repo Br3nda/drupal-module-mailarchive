@@ -216,11 +216,24 @@ function mailarchive_menu($may_cache) {
           );
         }
       }
+/*
+      else if (is_numeric($mid) && arg(3) == 'makeparent') {
+        $zero = arg(0);
+        $one = arg(1);
+        $two = arg(2);
+        drupal_goto(arg(0) .'/'. arg(1) .'/'. arg(2));
+      }
+*/
     }
     $mailarchive = arg(3);
     $items[] = array('path' => "admin/content/mailarchive/$mailarchive/fetch",
       'type' => MENU_SUGGESTED_ITEM,
       'callback' => 'mailarchive_admin_fetch',
+      'access' => user_access('maintain mailing list archives')
+    );
+    $items[] = array('path' => "admin/content/mailarchive/$mailarchive/update",
+      'type' => MENU_SUGGESTED_ITEM,
+      'callback' => 'mailarchive_admin_update',
       'access' => user_access('maintain mailing list archives')
     );
   }
@@ -750,6 +763,7 @@ function theme_mailarchive_message ($mailarchive, $messageid) {
     $output .= theme('mailarchive_message_header', $mailarchive, $message);
     $output .= theme('mailarchive_message_body', $mailarchive, $message);
     $output .= theme('mailarchive_message_thread_messages', $mailarchive, $message);
+    //$output .= theme('mailarchive_message_rethread_messages', $mailarchive, $message);
     // TODO: This query has awful performance, fix it then re-enable.
     //$output .= theme('mailarchive_message_footer', $mailarchive, $message);
     $output .= '</div>';
@@ -811,7 +825,7 @@ function theme_mailarchive_message_body($mailarchive, $message) {
     // TODO: set this up with CSS
     $output .= '<pre>';
     $output .= htmlentities($message->body);
-    $output .= '<pre>';
+    $output .= '</pre>';
   }
   else {
     $output .= t('[Empty message]');
@@ -820,6 +834,22 @@ function theme_mailarchive_message_body($mailarchive, $message) {
   
   return $output;
 }
+
+/*
+function theme_mailarchive_message_rethread_messages($mailarchive, $message) {
+  $output .= '<b>'. t('Parent picker:') .'</b>';
+  $result = db_query("SELECT m.mid, m.received, m.subject, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m WHERE m.sid = %d AND m.subject LIKE '%%%s%%'", $message->sid, $message->subject);
+  while ($m = db_fetch_object($result)) {
+    $output .= "<div>". l($m->subject, "mailarchive/$mailarchive/$m->mid");
+    if ($m->sub_thread_id != '1/') {
+      $output .= ' [has parent] ';
+    }
+    $output .= " (". l('parent', "mailarchive/$mailarchive/$m->mid/makeparent") .")";
+    $output .= "</div>";
+  }
+  return $output;
+}
+*/
 
 /**
  * outputs the threaded list of messages in the current thread (the thread containing $message)
@@ -923,7 +953,8 @@ function mailarchive_admin_overview() {
             $subscription->last_attempt ? t('%time ago', array('%time' => _mailarchive_time_since($subscription->last_attempt))) : t('none'),
             $subscription->subscription_status ? t('enabled') : t('disabled'),
             l(t('edit'), "node/$subscription->nid/edit") .' | '.
-            l(t('fetch mail'), "admin/content/mailarchive/$subscription->urlname/fetch")
+            l(t('fetch mail'), "admin/content/mailarchive/$subscription->urlname/fetch") .' | '.
+            l(t('update'), "admin/content/mailarchive/$subscription->urlname/update")
           );
         }
       }
@@ -1012,6 +1043,24 @@ function theme_mailarchive_content($node, $teaser=FALSE) {
 
   $node->body = $output;
   $node = node_prepare($node, $teaser);
+}
+
+/**
+ * Update statistics about mailing list.
+ */
+function mailarchive_admin_update() {
+  $urlname = arg(3);
+  $sid = (int)db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $urlname));
+  if ($sid) {
+    $count = db_result(db_query('SELECT COUNT(*) FROM {mailarchive_messages} WHERE sid = %d', $sid));
+    $last = db_result(db_query('SELECT MAX(created) FROM {mailarchive_messages} WHERE sid = %d', $sid));
+    db_query('UPDATE {mailarchive_subscriptions} SET message_count = %d, last_message = %d WHERE sid = %d', $count, $last, $sid);
+    drupal_set_message(t('Mailing list %list updated.', array('%list' => $urlname)));
+  }
+  else {
+    drupal_set_message(t('Mailing list %list does not exist.', array('%list' => $urlname)), 'error');
+  }
+  drupal_goto('admin/content/mailarchive');
 }
 
 /**
@@ -1501,7 +1550,7 @@ function _mailarchive_extract_attachments($subscription, $mid, $stream, $message
       $attachments++;
     }
     // Add attachment details to database.
-    db_query("INSERT INTO {mailarchive_messages_attachments} (sid, mid, name, bytes, part) VALUES(%d, %d, '%s', %d, %d)", $subscription->sid, $mid, "$attachment.$part", $details->bytes, $part);
+    db_query("INSERT INTO {mailarchive_messages_attachments} (sid, mid, name, bytes, part) VALUES(%d, %d, '%s', %d, %d)", $subscription->sid, $mid, "attachment.$part", $details->bytes, $part);
   }
   db_query("UPDATE {mailarchive_messages} SET attachments = %d, attachments_path = '%s' WHERE sid = %d AND mid = %d", $attachments, $attachments_path, $subscription->sid, $mid);
   return $attachments;
