@@ -206,14 +206,47 @@ function mailarchive_menu($may_cache) {
         'access' => user_access('access mailing list archives')
       );
       $mid = arg(2);
-      if (is_numeric($mid) && arg(3) == 'rethread') {
-        if ($thread_id = db_result(db_query('SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $sid, $mid))) {
-          $items[] = array('path' => "mailarchive/$mailarchive/$mid/rethread",
-            'type' => MENU_CALLBACK,
-            'callback' => '_mailarchive_rethread',
-            'callback arguments' => array($sid, $thread_id),
-            'access' => user_access('maintain mailing list archives')
-          );
+      if (is_numeric($mid)) {
+        if (arg(3) == 'rethread') {
+          if ($thread_id = db_result(db_query('SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $sid, $mid))) {
+            $items[] = array('path' => "mailarchive/$mailarchive/$mid/rethread",
+              'type' => MENU_CALLBACK,
+              'callback' => '_mailarchive_rethread',
+              'callback arguments' => array($sid, $thread_id),
+              'access' => user_access('maintain mailing list archives')
+            );
+          }
+        }
+        else if (arg(3) == 'search') {
+          switch (arg(4)) {
+            case 'subject':
+              $items[] = array(
+                'path' => "mailarchive/$mailarchive/$mid/search/subject",
+                'type' => MENU_CALLBACK,
+                'callback' => 'mailarchive_search_subject',
+                'callback arguments' => array($sid, $mid),
+                'access' => user_access('access mailing list archives')
+              );
+              break;
+            case 'from-name':
+              $items[] = array(
+                'path' => "mailarchive/$mailarchive/$mid/search/from-name",
+                'type' => MENU_CALLBACK,
+                'callback' => 'mailarchive_search_from_name',
+                'callback arguments' => array($sid, $mid),
+                'access' => user_access('access mailing list archives')
+              );
+              break;
+            case 'from-address':
+              $items[] = array(
+                'path' => "mailarchive/$mailarchive/$mid/search/from-address",
+                'type' => MENU_CALLBACK,
+                'callback' => 'mailarchive_search_from_address',
+                'callback arguments' => array($sid, $mid),
+                'access' => user_access('access mailing list archives')
+              );
+              break;
+          }
         }
       }
 /*
@@ -634,12 +667,12 @@ function mailarchive_view_mailarchive() {
 
   if ($messageid) {
     // Display only specified message.
-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive)));
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive)));
     $output .= theme('mailarchive_message', $mailarchive, $messageid);
   }
   else if ($mailarchive) {
     // Display all threads in mailing list.
-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailarchives'), 'mailarchive')));
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), 'mailarchive')));
     $output .= theme('mailarchive_thread', $mailarchive);
   }
   else {
@@ -777,7 +810,8 @@ function theme_mailarchive_message ($mailarchive, $messageid) {
 }
 
 /**
- * outputs the message header of message $message including to, from, subject, and date information
+ * Outputs the message header of message including to, from, subject, and 
+ * date information
  *
  * @param object $message
  * @return string $output
@@ -795,15 +829,17 @@ function theme_mailarchive_message_header($mailarchive, $message) {
 
   $output = "<div class=\"message-header\">\n";
   $headers = '<div class="message-header from">';
-  $headers .= t('From: !from', array('!from' => "$message->name &lt;$message->mailbox@...&gt;"));
+  $headers .= t('From: !from', array('!from' => l("$message->name", "mailarchive/$mailarchive/$message->mid/search/from-name") .' &lt;'. l("$message->mailbox@...", "mailarchive/$mailarchive/$message->mid/search/from-address") .'&gt;'));
   $headers .= "</div>\n<div class=\"message-header to\">";
-  $headers .= t('To: !to', array('!to' => implode(', ', $tos)));
+  if (!empty($tos)) {
+    $headers .= t('To: !to', array('!to' => implode(', ', $tos)));
+  }
   if (!empty($ccs)) {
     $headers .= "</div>\n<div class=\"message-header cc\">";
     $headers .= t('Cc: '. implode(', ', $ccs) .'<br/>');
   }
   $headers .= "</div>\n<div class=\"message-header subject\">";
-  $headers .= t('Subject: @subject', array('@subject' => $message->subject));
+  $headers .= t('Subject: !subject', array('!subject' => l($message->subject, "mailarchive/$mailarchive/$message->mid/search/subject")));
   $headers .= "</div>\n<div class=\"message-header date\">";
   $headers .= t('Date: @date', array('@date' => format_date($message->received, 'short')));
   $headers .= "</div>\n";
@@ -858,14 +894,16 @@ function theme_mailarchive_message_rethread_messages($mailarchive, $message) {
  * @return string $output
  */
 function theme_mailarchive_message_thread_messages($mailarchive, $message) {
-  $output = '<div="current-thread"><hr />';
+  $output = '<div class="current-thread"><hr />';
   $output .= '<b>'. t('Messages in current thread:') .'</b>';
 	
   // List messages in this thread ordered by when received.
   $result = db_query("SELECT m.mid, m.received, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = %d AND m.thread_id = %d AND a.address_type = 'from' ORDER BY m.sub_thread_id DESC", $message->sid, $message->thread_id);
 	   
+  $i = 0;
   $output .= "<div class=\"message-list-thread\">\n";
   while($thread = db_fetch_object($result)) {
+    $i++;
     if (!$thread->subject) {
       $thread->subject = t('[No subject]');
     }
@@ -889,6 +927,33 @@ function theme_mailarchive_message_thread_messages($mailarchive, $message) {
     $output .= "</div>\n";
   }
   $output .= '</div>';
+
+  if ($i <= 1) {
+    $subscription = _mailarchive_subscription_load($message->sid);
+    $output = '<div class="similar-messages"><hr />';
+    $output .= t('<div class="notification">This is the only message in this thread.</div>');
+    $subjects = _mailarchive_get_subjects($message->sid, $message->mid);
+    $result = _mailarchive_search_subjects($message->sid, $subjects, 15);
+    $i = 0;
+    // Build list of all messages.
+    $items = array();
+    while ($current = db_fetch_object($result)) {
+      $i++;
+      $from = $current->name ? $current->name : $current->mailbox;
+      $subject = $current->mid == $message->mid ? $current->subject : l($current->subject, "mailarchive/$subscription->urlname/$current->mid");
+      $items[] = $subject .' by '. l($from, "mailarchive/$subscription->urlname/$current->mid/search/from-name") .' on '. format_date($current->received, 'custom', 'M j, g:i a Y');
+    }
+    if ($i <= 1) {
+      $output .= '</div>';
+    }
+    else {
+      $output .= '<b>'. t('Possibly related messages:') .'</b>';
+      $output .= theme('item_list', $items);
+      $output .= theme('pager', 15);
+      $output .= '</div>';
+    }
+  }
+
   return $output;
 }
 
@@ -928,6 +993,145 @@ function theme_mailarchive_message_footer($mailarchive, $message) {
 	
   $output .= '</div>';
   return $output;
+}
+
+/**
+ * Returns a list of all messages with the same (or a similar) subject as the
+ * passed in message.
+ */
+function mailarchive_search_subject($sid, $mid) {
+  $subscription = _mailarchive_subscription_load($sid);
+  // Set breadcrumbs and page title.
+  $subjects = _mailarchive_get_subjects($sid, $mid);
+  drupal_set_title(t('Messages in %subscription with subject: %subject', array('%subscription' => $subscription->urlname, '%subject' => $subjects[0]))); 
+  _mailarchive_set_breadcrumb($sid, $mid);
+  $result = _mailarchive_search_subjects($sid, $subjects, 25);
+  // Build list of all messages.
+  $items = array();
+  while ($message = db_fetch_object($result)) {
+    if ($message->name) {
+      $from = $message->name;
+    }
+    else {
+      $from = $message->mailbox;
+    }
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). ' by '. l($from, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
+  }
+  $output = theme('item_list', $items);
+  $output .= theme('pager', 25);
+  return $output;
+}
+
+/**
+ * Returns a list of all messages with the same from name as the passed in
+ * message.
+ */
+function mailarchive_search_from_name($sid, $mid) {
+  $subscription = _mailarchive_subscription_load($sid);
+  // Set breadcrumbs and page title.
+  $name = db_result(db_query("SELECT name FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'from' AND sid = %d", $mid, $sid));
+  drupal_set_title(t('Messages in %subscription from: %name', array('%subscription' => $subscription->urlname, '%name' => $name))); 
+  _mailarchive_set_breadcrumb($sid, $mid);
+  // Display list of messages by name.
+  $result = pager_query("SELECT m.subject, m.received, a.mid, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE name = '". addslashes($name) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC", 25);
+  $items = array();
+  while ($message = db_fetch_object($result)) {
+    if ($message->name) {
+      $from = $message->name;
+    }
+    else {
+      $from = $message->mailbox;
+    }
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+  }
+  $output = theme('item_list', $items);
+  $output .= theme('pager', 25);
+  return $output;
+}
+
+/**
+ * Returns a list of all messages with the same from address as the passed in
+ * message.
+ */
+function mailarchive_search_from_address($sid, $mid) {
+  $subscription = _mailarchive_subscription_load($sid);
+  // Set breadcrumbs and page title.
+  $from = db_fetch_object(db_query("SELECT mailbox, address FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'from' AND sid = %d", $mid, $sid));
+  drupal_set_title(t('Messages in %subscription from: %address (domain blocked)', array('%subscription' => $subscription->urlname, '%address' => $from->mailbox .'@...'))); 
+  _mailarchive_set_breadcrumb($sid, $mid);
+  // Display list of messages by name.
+  $sql = "SELECT m.mid, m.subject, m.received, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE address = '". addslashes($from->address) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC";
+  $result = pager_query($sql, 25);
+  $items = array();
+  while ($message = db_fetch_object($result)) {
+    if ($message->name) {
+      $from = $message->name;
+    }
+    else {
+      $from = $message->mailbox;
+    }
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+  }
+  $output = theme('item_list', $items);
+  $output .= theme('pager', 25);
+  return $output;
+}
+
+/**
+ * Helper function to simplify setting the breadcrumb on mailarchive pages.
+ */
+function _mailarchive_set_breadcrumb($sid, $mid = 0) {
+  if ($mid) {
+    $subscription = _mailarchive_subscription_load($sid);
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive), l(t($subscription->urlname), 'mailarchive/'. $subscription->urlname)));
+  }
+  else {
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive)));
+  }
+}
+
+/**
+ * Return an array of subjects extracted from the current message.
+ */
+function _mailarchive_get_subjects($sid, $mid) {
+  $subjects = array();
+  $subjects[] = db_result(db_query('SELECT subject FROM {mailarchive_messages} WHERE sid = %d and mid = %d', $sid, $mid));
+  // Remove common prefixes from subject.
+  $subjects[0] = ltrim(preg_replace('/^(re:)||^(fw:)/i', '', $subjects[0]));
+
+  // Extract (was: ...) or [was: ...] style previous subjects.
+  preg_match('&(.*)(\[)?(\()?was:( *)(.*)(\])?(\))?&i', $subjects[0], $match);
+  if (isset($match[5])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[5]), ' \t\n\r\0)]');
+  }
+  if (isset($match[1])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[1]), ' \t\n\r\0([');
+  }
+
+  // Extract (re: ...) or [re: ...] style previous subjects.
+  preg_match('&(.*)(\[)?(\()?re:( *)(.*)(\])?(\))?&i', $subjects[0], $match);
+  if (isset($match[5])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[5]), ' \t\n\r\0)]');
+  }
+  if (isset($match[1])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[1]), ' \t\n\r\0)]');
+  }
+
+  return $subjects;
+}
+
+function _mailarchive_search_subjects($sid, $subjects, $limit = 10) {
+  $filter = '';
+  foreach ($subjects as $subject) {
+    if ($filter) {
+      $filter .= " OR m.subject LIKE '%%". db_escape_string($subject) ."%%'";
+    }
+    else {
+      $filter = " AND (m.subject LIKE '%%". db_escape_string($subject) ."%%'";
+    }
+  }
+  $filter .= ')';
+  return pager_query("SELECT m.mid, m.subject, m.received, a.name, a.mailbox FROM {mailarchive_messages} m JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = $sid $filter AND address_type = 'from' ORDER BY m.received DESC", $limit);
 }
 
 /**
@@ -1672,11 +1876,9 @@ function _mailarchive_fetch($sid) {
   $password = $subscription->server_password;
   switch ($subscription->protocol) {
     case MAILARCHIVE_PROTOCOL_POP3:
-      //$connect = '{'. $subscription->server_name .':'. $subscription->port .'/pop3}'. $subscription->mailbox;
       $connect = '{'. $subscription->server_name .':'. $subscription->port .'/pop3/novalidate-cert}'. $subscription->mailbox;
       break;
     case MAILARCHIVE_PROTOCOL_POP3S:
-      //$connect = '{'. $subscription->server_name .':'. $subscription->port .'/pop3/ssl}'. $subscription->mailbox;
       $connect = '{'. $subscription->server_name .':'. $subscription->port .'/pop3/ssl/novalidate-cert}'. $subscription->mailbox;
       break;
     case MAILARCHIVE_PROTOCOL_IMAP:
