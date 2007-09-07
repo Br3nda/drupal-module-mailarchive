@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.4 2007/08/14 22:34:22 jeremy Exp $
+// $Id: mailarchive.install,v 1.5 2007/09/07 23:35:36 jeremy Exp $
 
 /**
  * Mailarchive module database schema.
@@ -39,6 +39,9 @@ function mailarchive_install() {
         sid int(11) UNSIGNED NOT NULL DEFAULT '0',
         created int(11) UNSIGNED NOT NULL DEFAULT '0',
         received int(11) UNSIGNED NOT NULL DEFAULT '0',
+        year int(4) UNSIGNED NOT NULL DEFAULT '0',
+        month int(2) UNSIGNED NOT NULL DEFAULT '0',
+        day day(2) UNSIGNED NOT NULL DEFAULT '0',
         headers text NOT NULL DEFAULT '',
         message_id varchar(255) NOT NULL DEFAULT '',
         reference varchar(255) NOT NULL DEFAULT '',
@@ -113,3 +116,19 @@ function mailarchive_uninstall() {
   // Flush cache so if we re-install we're not using stale variables.
   db_query('DELETE FROM {cache}');
 }
+
+/**
+ * Add year, month and day to mailarchive_messages table.
+ */
+function mailarchive_update_1() {
+  $ret = array();
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD year int(4) UNSIGNED NOT NULL DEFAULT '0' AFTER received");
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD month int(2) UNSIGNED NOT NULL DEFAULT '0' AFTER year");
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD day int(2) UNSIGNED NOT NULL DEFAULT '0' AFTER month");
+  $result = db_query('SELECT mid, received FROM {mailarchive_messages}');
+  while ($message = db_fetch_object($result)) {
+    db_query('UPDATE {mailarchive_messages} SET year = %d, month = %d, day = %d WHERE mid = %d', format_date($message->received, 'custom', 'Y'), format_date($message->received, 'custom', 'm'), format_date($message->received, 'custom', 'd'), $message->mid);
+  }
+  return $ret;
+}
+

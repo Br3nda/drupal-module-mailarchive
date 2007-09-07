@@ -606,6 +606,7 @@ function mailarchive_page($tid = 0) {
 /**
  * Display mailing list details for user overview page.
  * TODO: Cleanup this function.
+ * TODO: Improve performance -- this page is way too slow to load.
  */
 function mailarchive_display_subscriptions($tid, $depth = 0) {
   $result = db_query('SELECT s.sid, s.urlname, n.nid, n.title, s.message_count, s.last_message, t.tid FROM {term_node} t INNER JOIN {node} n ON t.nid = n.nid INNER JOIN {mailarchive_subscriptions} s ON n.nid = s.nid WHERE t.tid = %d', $tid);
@@ -618,6 +619,7 @@ function mailarchive_display_subscriptions($tid, $depth = 0) {
     }
     if ($subscription->message_count) {
       $last_message = _mailarchive_time_since($subscription->last_message) .' ago';
+/*
       $mid = db_result(db_query('SELECT MAX(mid) FROM {mailarchive_messages} WHERE sid = %d GROUP BY sid', $subscription->sid));
       $message = db_fetch_object(db_query('SELECT mid, subject, received FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $subscription->sid, $mid));
       $from = db_fetch_object(db_query("SELECT aid, name, mailbox, host FROM {mailarchive_messages_addresses WHERE sid = %d AND mid = %d AND address_type = 'from'", $subscription->sid, $mid));
@@ -639,6 +641,7 @@ function mailarchive_display_subscriptions($tid, $depth = 0) {
       }
       $last_message .= '<br /> '. t('Date: '). format_date($message->received, 'custom', 'M j, g:i a Y');
       $last_message .= " </div>\n";
+*/
     }
     else {
       $last_message = t('none');
@@ -725,7 +728,7 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
 
   $messages_per_page = ((int)$_GET['messages_per_page'] ? (int)$_GET['messages_per_page'] : 25);
 
-  $output = "<div class=\"message-list\" id=\"message-list-$mailarchive\">\n";
+  $output = "<div class=\"mailarchive\"><div class=\"message-list\" id=\"message-list-$mailarchive\">\n";
 
   $header = array(
     array('data' => t('Subject'), 'field' => 'm.thread_id', 'sort' => 'desc'),
@@ -776,7 +779,7 @@ function theme_mailarchive_thread($mailarchive, $period = 'month', $a = NULL, $b
   $output .= theme('table', $header, $rows);
   $output .= theme('pager', NULL, $messages_per_page, 0, NULL);
 
-  $output .= "</div></div>\n";
+  $output .= "</div></div></div>\n";
   return $output;
 }
 
@@ -792,7 +795,7 @@ function theme_mailarchive_message ($mailarchive, $messageid) {
   drupal_set_title($message->subject);
 
   if (!empty($message)) {
-    $output .= '<div class="message-thread">';
+    $output .= '<div class="mailarchive"><div class="message-thread">';
     $output .= theme('mailarchive_message_header', $mailarchive, $message);
     $output .= theme('mailarchive_message_body', $mailarchive, $message);
     $output .= theme('mailarchive_message_thread_messages', $mailarchive, $message);
@@ -800,7 +803,7 @@ function theme_mailarchive_message ($mailarchive, $messageid) {
     // TODO: This query has awful performance, fix it then re-enable.
     //$output .= theme('mailarchive_message_footer', $mailarchive, $message);
     $output .= '</div>';
-    $output .= "</div>\n";
+    $output .= "</div></div>\n";
   }
   else {
     drupal_goto("mailarchive/$mailarchive");
@@ -943,14 +946,10 @@ function theme_mailarchive_message_thread_messages($mailarchive, $message) {
       $subject = $current->mid == $message->mid ? $current->subject : l($current->subject, "mailarchive/$subscription->urlname/$current->mid");
       $items[] = $subject .' by '. l($from, "mailarchive/$subscription->urlname/$current->mid/search/from-name") .' on '. format_date($current->received, 'custom', 'M j, g:i a Y');
     }
-    if ($i <= 1) {
-      $output .= '</div>';
-    }
-    else {
+    if ($i > 1) {
       $output .= '<b>'. t('Possibly related messages:') .'</b>';
       $output .= theme('item_list', $items);
       $output .= theme('pager', 15);
-      $output .= '</div>';
     }
   }
 
@@ -1017,8 +1016,10 @@ function mailarchive_search_subject($sid, $mid) {
     }
     $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). ' by '. l($from, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
   }
-  $output = theme('item_list', $items);
+  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output .= theme('item_list', $items);
   $output .= theme('pager', 25);
+  $output .= "</div></div>\n";
   return $output;
 }
 
@@ -1044,8 +1045,10 @@ function mailarchive_search_from_name($sid, $mid) {
     }
     $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
   }
-  $output = theme('item_list', $items);
+  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output .= theme('item_list', $items);
   $output .= theme('pager', 25);
+  $output .= "</div></div>\n";
   return $output;
 }
 
@@ -1072,8 +1075,10 @@ function mailarchive_search_from_address($sid, $mid) {
     }
     $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
   }
-  $output = theme('item_list', $items);
+  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output .= theme('item_list', $items);
   $output .= theme('pager', 25);
+  $output .= "</div></div>\n";
   return $output;
 }
 
@@ -1551,7 +1556,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   $body = _mailarchive_get_message_body($stream, $message, $structure);
 
   // Save the new message.
-  db_query("INSERT INTO {mailarchive_messages} (sid, created, received, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, subject, body, attachments) VALUES (%d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', %d)", $subscription->sid, time(), $header->udate, serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
+  db_query("INSERT INTO {mailarchive_messages} (sid, created, received, year, month, day, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, subject, body, attachments) VALUES (%d, %d, %d, %d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', %d)", $subscription->sid, time(), $header->udate, format_date($header->udate, 'custom', 'Y'), format_date($header->udate, 'custom', 'm'), format_date($header->udate, 'custom', 'd'), serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
   $mid = db_result(db_query("SELECT mid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
 
   // If enabled, download any attachments.
@@ -1869,7 +1874,8 @@ function _mailarchive_fetch($sid) {
 
   // Attempt to increase the allowed amount of time for downloading messages
   // from the default of 30 seconds to a full 5 minutes.
-  set_time_limit(300);
+  //set_time_limit(300);
+  set_time_limit(0);
 
   // Prepare a connection to the mail server
   $username = $subscription->server_username;
