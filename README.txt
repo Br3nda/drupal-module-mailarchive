@@ -2,11 +2,7 @@ Overview:
 ---------
 The mailarchive module allows you to subscribe to one or more mailing lists,
 messages from which will be stored in a threaded archive.  It is then possible
-for users to browse and search these archives.
-
-This is a rewrite of the earlier mail_archive module, addressing many
-shortcomings of that earlier effort.  In particular, this new module is simpler
-to configure and more highly optimized.
+for users to browse and search these archives using the mailarchive_view module.
 
 
 Features:
@@ -20,11 +16,6 @@ Features:
  o Provides a browsable mailing list overview page similar to Drupal forums, 
    offering an at a glance look at how active each list is, who sent the last
    message, and what it was about.
-
-
-Todo:
------
- o finish rewrite from old 4.6 mail_archive module
 
 
 Requires:
