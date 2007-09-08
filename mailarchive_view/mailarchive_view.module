@@ -1,0 +1,676 @@
+<?php
+
+/**
+ * @file
+ * A module for browsing mail archives provided by the mailarchive module.
+ * Copyright (c) 2007.
+ *   Jeremy Andrews <jeremy@kerneltrap.org>.  All rights reserved.
+ */
+
+/**
+ * Drupal _perm hook.  Defines permissions utilized by this module and its
+ * API.
+ *
+ * @return
+ *  An array of permissions.
+ */
+function mailarchive_view_perm() {
+  return array('access mailing list archives');
+}
+
+/**
+ * Drupal _menu hook. 
+ *
+ * @param $may_cache
+ *  A boolean that's either TRUE or FALSE
+ *
+ * @return
+ *  An array of menu items.
+ */
+function mailarchive_view_menu($may_cache) {
+  $items = array();
+
+  if ($may_cache) {
+    $items[] = array('path' => 'mailarchive',
+      'title' => t('Mailing list archives'),
+      'access' => user_access('access mailing list archives'),
+      'callback' => 'mailarchive_view_page');
+  }
+  else {
+    if ($sid = _mailarchive_sid(arg(1))) {
+      $mailarchive = arg(1);
+      $items[] = array('path' => "mailarchive/$mailarchive",
+        'type' => MENU_SUGGESTED_ITEM,
+        'callback' => 'mailarchive_view_mailarchive',
+        'access' => user_access('access mailing list archives')
+      );
+      $mid = arg(2);
+      if (is_numeric($mid)) {
+        if (arg(3) == 'search') {
+          switch (arg(4)) {
+            case 'subject':
+              $items[] = array(
+                'path' => "mailarchive/$mailarchive/$mid/search/subject",
+                'type' => MENU_CALLBACK,
+                'callback' => 'mailarchive_view_search_subject',
+                'callback arguments' => array($sid, $mid),
+                'access' => user_access('access mailing list archives')
+              );
+              break;
+            case 'from-name':
+              $items[] = array(
+                'path' => "mailarchive/$mailarchive/$mid/search/from-name",
+                'type' => MENU_CALLBACK,
+                'callback' => 'mailarchive_view_search_from_name',
+                'callback arguments' => array($sid, $mid),
+                'access' => user_access('access mailing list archives')
+              );
+              break;
+            case 'from-address':
+              $items[] = array(
+                'path' => "mailarchive/$mailarchive/$mid/search/from-address",
+                'type' => MENU_CALLBACK,
+                'callback' => 'mailarchive_view_search_from_address',
+                'callback arguments' => array($sid, $mid),
+                'access' => user_access('access mailing list archives')
+              );
+              break;
+          }
+        }
+      }
+    }
+  }
+
+  return $items;
+}
+
+/**
+ * Display the mailarchive user overview page, listing all mailing list
+ * archives.
+ */
+function mailarchive_view_page($tid = 0) {
+  if (module_exists('taxonomy')) {
+    $header = array(t('Mailing list archive'), t('Messages'), t('Last message'));
+    if ($tid) {
+      $rows = mailarchive_view_display_subscriptions($tid);
+    }
+    $tree = taxonomy_get_tree(_mailarchive_get_vid(), $tid);
+    if ($tree) {
+      foreach ($tree as $term) {
+        if (in_array($term->tid, variable_get('mailarchive_categories', array()))) {
+          $description = '<div style="margin-left: '. ($term->depth * 30) ."px;\">\n";
+          $description .= ' <div class="name">'. l($term->name, "mailarchive/$term->tid") ."</div>\n";
+          if ($term->description) {
+            $description .= ' <div class="description">'. filter_xss_admin($term->description) ."</div>\n";
+          }
+          $description .= "</div>\n";
+          $rows[] = array(array('data' => $description, 'class' => 'container', 'colspan' => 3));
+          $rows = array_merge($rows, mailarchive_view_display_subscriptions($term->tid, $term->depth + 1));
+        }
+      }
+    }
+    // We'll use forum's css for now.
+    $output = '<div id="forum">';
+    $output .= theme('table', $header, $rows);
+    $output .= '</div>';
+    return $output;
+  }
+  else {
+    drupal_set_message(t('The mailarchive module requires that the taxonomy module be enabled and properly configured.'), 'error');
+    return '';
+  }
+}
+
+/**
+ * Display mailing list details for user overview page.
+ * TODO: Cleanup this function.
+ * TODO: Improve performance -- this page is way too slow to load.
+ */
+function mailarchive_view_display_subscriptions($tid, $depth = 0) {
+  $result = db_query('SELECT s.sid, s.urlname, n.nid, n.title, s.message_count, s.last_message, t.tid FROM {term_node} t INNER JOIN {node} n ON t.nid = n.nid INNER JOIN {mailarchive_subscriptions} s ON n.nid = s.nid WHERE t.tid = %d', $tid);
+  while ($subscription = db_fetch_object($result)) {
+    $description = '<div style="margin-left: '. (($depth) * 30) ."px;\">\n";
+    $description .= ' <div class="name">'. l($subscription->title, "mailarchive/$subscription->urlname") ."</div>\n";
+    $node = node_load($subscription->nid);
+    if ($node->body) {
+      $description .= ' <div class="description">'. filter_xss_admin($node->body) ."</div>\n";
+    }
+    if ($subscription->message_count) {
+      $last_message = _mailarchive_time_since($subscription->last_message) .' ago';
+/*
+      $mid = db_result(db_query('SELECT MAX(mid) FROM {mailarchive_messages} WHERE sid = %d GROUP BY sid', $subscription->sid));
+      $message = db_fetch_object(db_query('SELECT mid, subject, received FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $subscription->sid, $mid));
+      $from = db_fetch_object(db_query("SELECT aid, name, mailbox, host FROM {mailarchive_messages_addresses WHERE sid = %d AND mid = %d AND address_type = 'from'", $subscription->sid, $mid));
+      if ($from->name) {
+        $source = $from->name;
+      }
+      else {
+        $source = "$from->mailbox@...";
+      }
+      if (strlen($source) > 64) {
+        $source = substr($source, 0, 61) .'...';
+      }
+      $last_message .= ' <div class="description">'. t('From: '). filter_xss_admin($source);
+      if ($message->subject) {
+        if (strlen($message->subject) > 64) {
+          $message->subject = substr($message->subject, 0, 61) .'...';
+        }
+        $last_message .= '<br /> '. t('Subject: '). filter_xss_admin(l($message->subject, "mailarchive/$subscription->urlname/$message->mid"));
+      }
+      $last_message .= '<br /> '. t('Date: '). format_date($message->received, 'custom', 'M j, g:i a Y');
+      $last_message .= " </div>\n";
+*/
+    }
+    else {
+      $last_message = t('none');
+    }
+    $description .= "</div>\n";
+
+    $rows[] = array(
+      array('data' => $description, 'class' => 'mailarchive'),
+      array('data' => $subscription->message_count),
+      array('data' => $last_message)
+    );
+  }
+  return $rows ? $rows : array();
+}
+
+/**
+ * Decides if page trying to be viewed is a single message or an archive/list.
+ * If single message, pass to theme_mailarchive_view_message.
+ * If archive, pass to theme_mailarchive_view_thread.
+ */
+function mailarchive_view_mailarchive() {
+  // mailarchive / mailing-list-name / message_id
+  // arg(0)      / arg(1)            / arg(2)
+  $mailarchive = arg(1);
+  $messageid = arg(2);
+
+  if ($messageid) {
+    // Display only specified message.
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive)));
+    $output .= theme('mailarchive_view_message', $mailarchive, $messageid);
+  }
+  else if ($mailarchive) {
+    // Display all threads in mailing list.
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), 'mailarchive')));
+    $output .= theme('mailarchive_view_thread', $mailarchive);
+  }
+  else {
+    // No $messageid or $mailarchive, display overview of all mailing lists.
+    mailarchive_view_page();
+  }
+  return $output;
+}
+
+/**
+ * Displays the contents/messages for the archive specified in $mailarchive
+ *
+ * @param string $mailarchive - contains the "urlname" of the archive to display
+ * @param string $period
+ * @param string $a
+ * @param string $b
+ * @return unknown
+ */
+function theme_mailarchive_view_thread($mailarchive, $period = 'month', $a = NULL, $b = NULL) {
+  $sid = _mailarchive_sid($mailarchive);
+  if (!$sid) {
+    drupal_set_message(t('Unknown mailing list, %mailarchive.', array('%mailarchive' => $mailarchive)));
+    drupal_goto('mailarchive');
+  }
+  drupal_set_title($mailarchive);
+  $order = isset($_GET['order']) ? $_GET['order'] : '';
+  
+  if ($a == NULL) {
+    $a = format_date(time(), 'custom', 'm');
+  }
+  if ($b == NULL) {
+    $b = format_date(time(), 'custom', 'Y');
+  }
+  switch ($period) {
+    case 'day':
+      $a--;
+      $sql_range = " AND day = $a AND year = $b";
+      break;
+    case 'week':
+      $sql_range = " AND week = $a AND year = $b";
+      break;
+    case 'month':
+      default:
+      $sql_range = " AND month = $a AND year = $b";
+      break;
+    case 'year':
+      $sql_range = "AND year = $a";
+      break;
+  }
+
+  $messages_per_page = ((int)$_GET['messages_per_page'] ? (int)$_GET['messages_per_page'] : 25);
+
+  $output = "<div class=\"mailarchive\"><div class=\"message-list\" id=\"message-list-$mailarchive\">\n";
+
+  $header = array(
+    array('data' => t('Subject'), 'field' => 'm.thread_id', 'sort' => 'desc'),
+    array('data' => t('From'), 'field' => 'a.name'),
+    array('data' => t('Date'), 'field' => 'm.received')
+  );
+  
+  // TODO: Fix this to be threaded and sorted properly.
+  // Get list of messages in current group.
+  $sql = "SELECT m.mid, m.received, m.subject, a.name, a.mailbox, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from' AND m.sid = $sid";
+  $sql .= tablesort_sql($header) .', m.sub_thread_id DESC';
+  $result = pager_query($sql, $messages_per_page, 0, "SELECT COUNT(m.thread_id) FROM {mailarchive_messages} m WHERE m.sid = %d", $sid);
+  
+  $output .= "<div class=\"message-list-thread\" id =\"message-list-$mailarchive\">\n";
+  while ($message = db_fetch_object($result)) {
+    $row = array();
+
+    // We only indent threads if ordered by subject, otherwise we're not really
+    // displaying threads.
+    if (!$order || $order == t('Subject')) {
+      $message->depth = count(explode('.', $message->sub_thread_id)) -1;
+    }
+
+    // Subject row:
+    if ($message->subject) {
+      if (strlen($message->subject) > 62) {
+        $message->subject = substr(htmlspecialchars($message->subject), 0, 60) .'...';
+      }
+    }
+    else {
+      $message->subject = t('(No subject)');
+    }
+    $subject = '<div class="message-list-thread-line" style="margin-left: '. ($message->depth * 15) .'px;">';
+    $subject .= ' <span class="message-list-thread-subject">'. l($message->subject, "mailarchive/$mailarchive/$message->mid") .'</span>';
+    $subject .= "</div>\n";
+    $row[] = $subject;
+
+    // From row:
+    $mailfrom = $message->name ? $message->name : $message->mailbox;
+    $row[] = (strlen($mailfrom) > 24 ? substr(htmlspecialchars($mailfrom), 0, 20). '...' : htmlspecialchars($mailfrom));
+
+    // Date row
+    $row[] = format_date($message->received, 'custom', 'M j, g:i a Y');
+
+    $rows[] = $row;
+  }
+
+  $output .= theme('table', $header, $rows);
+  $output .= theme('pager', NULL, $messages_per_page, 0, NULL);
+
+  $output .= "</div></div></div>\n";
+  return $output;
+}
+
+/**
+ * function to display a single message identified by message id
+ *
+ * @param int $messageid
+ * @return string $output
+ */
+function theme_mailarchive_view_message ($mailarchive, $messageid) {
+  // TODO: Optimize -- this is a performance killer.
+  $message = db_fetch_object(db_query("SELECT m.mid, m.sid, m.received, m.subject, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {mailarchive_subscriptions} s INNER JOIN {mailarchive_messages} m ON s.sid = m.sid INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid AND s.urlname = '%s' WHERE m.mid = '%d' AND a.address_type = 'from'", $mailarchive, $messageid));
+  drupal_set_title($message->subject);
+
+  if (!empty($message)) {
+    $output .= '<div class="mailarchive"><div class="message-thread">';
+    $output .= theme('mailarchive_view_message_header', $mailarchive, $message);
+    $output .= theme('mailarchive_view_message_body', $mailarchive, $message);
+    $output .= theme('mailarchive_view_message_thread_messages', $mailarchive, $message);
+    //$output .= theme('mailarchive_message_rethread_messages', $mailarchive, $message);
+    // TODO: This query has awful performance, fix it then re-enable.
+    //$output .= theme('mailarchive_message_footer', $mailarchive, $message);
+    $output .= '</div>';
+    $output .= "</div></div>\n";
+  }
+  else {
+    drupal_goto("mailarchive/$mailarchive");
+  }
+ 
+  return $output;
+}
+
+/**
+ * Outputs the message header of message including to, from, subject, and 
+ * date information
+ *
+ * @param object $message
+ * @return string $output
+ */
+function theme_mailarchive_view_message_header($mailarchive, $message) {
+  $tos = $ccs = array();
+  $result = db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'to'", $message->mid);
+  while ($to = db_fetch_object($result)) {
+    $tos[] = "$to->name &lt;$to->mailbox@...&gt;";
+  }
+  $result = db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'cc'", $message->mid);
+  while ($cc = db_fetch_object($result)) {
+    $ccs[] = "$cc->name &lt;$cc->mailbox@...&gt;";
+  }
+
+  $output = "<div class=\"message-header\">\n";
+  $headers = '<div class="message-header from">';
+  $headers .= t('From: !from', array('!from' => l("$message->name", "mailarchive/$mailarchive/$message->mid/search/from-name") .' &lt;'. l("$message->mailbox@...", "mailarchive/$mailarchive/$message->mid/search/from-address") .'&gt;'));
+  $headers .= "</div>\n<div class=\"message-header to\">";
+  if (!empty($tos)) {
+    $headers .= t('To: !to', array('!to' => implode(', ', $tos)));
+  }
+  if (!empty($ccs)) {
+    $headers .= "</div>\n<div class=\"message-header cc\">";
+    $headers .= t('Cc: '. implode(', ', $ccs) .'<br/>');
+  }
+  $headers .= "</div>\n<div class=\"message-header subject\">";
+  $headers .= t('Subject: !subject', array('!subject' => l($message->subject, "mailarchive/$mailarchive/$message->mid/search/subject")));
+  $headers .= "</div>\n<div class=\"message-header date\">";
+  $headers .= t('Date: @date', array('@date' => format_date($message->received, 'short')));
+  $headers .= "</div>\n";
+  $output .= $headers;
+  $output .= "</div><br/>\n";
+  return $output;
+}
+
+/**
+ * Outputs the message body of the message given in $message
+ *
+ * @param object $message
+ * @return string $output
+ */
+function theme_mailarchive_view_message_body($mailarchive, $message) {
+  $output = "<div class=\"message-body\">\n";
+  //check if the message has a body - if not, output no-message string
+  if ($message->body) {
+    // TODO: set this up with CSS
+    $output .= '<pre>';
+    $output .= htmlentities($message->body);
+    $output .= '</pre>';
+  }
+  else {
+    $output .= t('[Empty message]');
+  }
+  $output .= "</div>\n";
+  
+  return $output;
+}
+
+/*
+function theme_mailarchive_message_rethread_messages($mailarchive, $message) {
+  $output .= '<b>'. t('Parent picker:') .'</b>';
+  $result = db_query("SELECT m.mid, m.received, m.subject, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m WHERE m.sid = %d AND m.subject LIKE '%%%s%%'", $message->sid, $message->subject);
+  while ($m = db_fetch_object($result)) {
+    $output .= "<div>". l($m->subject, "mailarchive/$mailarchive/$m->mid");
+    if ($m->sub_thread_id != '1/') {
+      $output .= ' [has parent] ';
+    }
+    $output .= " (". l('parent', "mailarchive/$mailarchive/$m->mid/makeparent") .")";
+    $output .= "</div>";
+  }
+  return $output;
+}
+*/
+
+/**
+ * outputs the threaded list of messages in the current thread (the thread containing $message)
+ *
+ * @param object $message
+ * @return string $output
+ */
+function theme_mailarchive_view_message_thread_messages($mailarchive, $message) {
+  $output = '<div class="current-thread"><hr />';
+  $output .= '<b>'. t('Messages in current thread:') .'</b>';
+	
+  // List messages in this thread ordered by when received.
+  $result = db_query("SELECT m.mid, m.received, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = %d AND m.thread_id = %d AND a.address_type = 'from' ORDER BY m.sub_thread_id DESC", $message->sid, $message->thread_id);
+	   
+  $i = 0;
+  $output .= "<div class=\"message-list-thread\">\n";
+  while($thread = db_fetch_object($result)) {
+    $i++;
+    if (!$thread->subject) {
+      $thread->subject = t('[No subject]');
+    }
+    // Calculate the depth of the message.
+    $message_depth = count(explode('.', $thread->sub_thread_id)) -1;
+    $output .= '<div class="message-list-thread-line" style="margin-left: '. ($message_depth * 15) .'px;">';
+
+    // Truncate fields as necessary.
+    $subject = (strlen($thread->subject) > 62) ? substr(htmlspecialchars($thread->subject), 0, 60) .'...' : htmlspecialchars($thread->subject);
+    $from = (strlen($thread->name) > 24) ? substr(htmlspecialchars($thread->name), 0, 60) .'...' : htmlspecialchars($thread->name);
+
+    // If we are viewing this message, don't link it.
+    if ($thread->mid == $message->mid) {
+      $output .= "<span class=\"message-list-thread-subject\">$subject</span>";
+    } 
+    else {
+      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/$thread->mid", array('title' => $thread->subject)) .'</span>';
+    }
+    $output .= "<span class=\"message-list-thread-from\">, $from</span>";
+    $output .= '<span class="message-list-thread-date">, ('. format_date($thread->received, 'custom', 'D M j, g:i a') .")</span>";
+    $output .= "</div>\n";
+  }
+  $output .= '</div>';
+
+  if ($i <= 1) {
+    $subscription = _mailarchive_subscription_load($message->sid);
+    $output = '<div class="similar-messages"><hr />';
+    $output .= t('<div class="notification">This is the only message in this thread.</div>');
+    $subjects = _mailarchive_view_get_subjects($message->sid, $message->mid);
+    $result = _mailarchive_view_search_subjects($message->sid, $subjects, 15);
+    $i = 0;
+    // Build list of all messages.
+    $items = array();
+    while ($current = db_fetch_object($result)) {
+      $i++;
+      $from = $current->name ? $current->name : $current->mailbox;
+      $subject = $current->mid == $message->mid ? $current->subject : l($current->subject, "mailarchive/$subscription->urlname/$current->mid");
+      $items[] = $subject .' by '. l($from, "mailarchive/$subscription->urlname/$current->mid/search/from-name") .' on '. format_date($current->received, 'custom', 'M j, g:i a Y');
+    }
+    if ($i > 1) {
+      $output .= '<b>'. t('Possibly related messages:') .'</b>';
+      $output .= theme('item_list', $items);
+      $output .= theme('pager', 15);
+    }
+  }
+
+  return $output;
+}
+
+/**
+ * Provides links to the next and previous threads in the current archive
+ *
+ * @param object $message
+ * @return string $output
+ */
+function theme_mailarchive_view_message_footer($mailarchive, $message) {
+  $output = '<div class="message-footer" >';
+  $output .= '<hr/>';
+
+  // Find the message ids of the previous and next messages.
+  $prev = db_fetch_object(db_query("SELECT mid, subject FROM mailarchive_messages WHERE sub_thread_id = '1/' AND thread_id IN ( SELECT MAX(thread_id) AS thread_id FROM mailarchive_messages WHERE sid = %d AND thread_id < %d)", $message->sid, $message->thread_id));
+  $next = db_fetch_object(db_query("SELECT mid, subject FROM mailarchive_messages WHERE sub_thread_id = '1/' AND thread_id IN ( SELECT MIN(thread_id) AS thread_id FROM mailarchive_messages WHERE sid = %d AND thread_id > %d)", $message->sid, $message->thread_id));
+
+  // Output the links to the next and previous messages if there are next and 
+  // previous messages if one of them doesn't exist, then just use the text 
+  // with no link.
+  // TODO: Replace table with CSS.
+  $output .= "<div align='center'><table border=0><tr><td width=150 align='right'>";
+  if($prev->mid) {
+    $output .= l('< Previous Thread', "mailarchive/$mailarchive/$prev->mid", array('title' => $prev->subject));
+  } 
+  else {
+    $output .= "< Previous Thread";	
+  }
+  $output .= "</td><td width=40></td><td width=150 align='left'>";
+  if($next->mid) {
+    $output .= l('Next Thread >',"mailarchive/$mailarchive/$next->mid", array('title' => $next->subject));
+  } 
+  else {
+    $output .= "Next Thread >";
+  }
+  $output .= "</td></tr></table>";
+	
+  $output .= '</div>';
+  return $output;
+}
+
+/**
+ * Returns a list of all messages with the same (or a similar) subject as the
+ * passed in message.
+ */
+function mailarchive_view_search_subject($sid, $mid) {
+  $subscription = _mailarchive_subscription_load($sid);
+  // Set breadcrumbs and page title.
+  $subjects = _mailarchive_view_get_subjects($sid, $mid);
+  drupal_set_title(t('Messages in %subscription with subject: %subject', array('%subscription' => $subscription->urlname, '%subject' => $subjects[0]))); 
+  _mailarchive_view_set_breadcrumb($sid, $mid);
+  $result = _mailarchive_view_search_subjects($sid, $subjects, 25);
+  // Build list of all messages.
+  $items = array();
+  while ($message = db_fetch_object($result)) {
+    if ($message->name) {
+      $from = $message->name;
+    }
+    else {
+      $from = $message->mailbox;
+    }
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). ' by '. l($from, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
+  }
+  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output .= theme('item_list', $items);
+  $output .= theme('pager', 25);
+  $output .= "</div></div>\n";
+  return $output;
+}
+
+/**
+ * Returns a list of all messages with the same from name as the passed in
+ * message.
+ */
+function mailarchive_view_search_from_name($sid, $mid) {
+  $subscription = _mailarchive_subscription_load($sid);
+  // Set breadcrumbs and page title.
+  $name = db_result(db_query("SELECT name FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'from' AND sid = %d", $mid, $sid));
+  drupal_set_title(t('Messages in %subscription from: %name', array('%subscription' => $subscription->urlname, '%name' => $name))); 
+  _mailarchive_view_set_breadcrumb($sid, $mid);
+  // Display list of messages by name.
+  $result = pager_query("SELECT m.subject, m.received, a.mid, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE name = '". addslashes($name) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC", 25);
+  $items = array();
+  while ($message = db_fetch_object($result)) {
+    if ($message->name) {
+      $from = $message->name;
+    }
+    else {
+      $from = $message->mailbox;
+    }
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+  }
+  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output .= theme('item_list', $items);
+  $output .= theme('pager', 25);
+  $output .= "</div></div>\n";
+  return $output;
+}
+
+/**
+ * Returns a list of all messages with the same from address as the passed in
+ * message.
+ */
+function mailarchive_view_search_from_address($sid, $mid) {
+  $subscription = _mailarchive_subscription_load($sid);
+  // Set breadcrumbs and page title.
+  $from = db_fetch_object(db_query("SELECT mailbox, address FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'from' AND sid = %d", $mid, $sid));
+  drupal_set_title(t('Messages in %subscription from: %address (domain blocked)', array('%subscription' => $subscription->urlname, '%address' => $from->mailbox .'@...'))); 
+  _mailarchive_view_set_breadcrumb($sid, $mid);
+  // Display list of messages by name.
+  $sql = "SELECT m.mid, m.subject, m.received, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE address = '". addslashes($from->address) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC";
+  $result = pager_query($sql, 25);
+  $items = array();
+  while ($message = db_fetch_object($result)) {
+    if ($message->name) {
+      $from = $message->name;
+    }
+    else {
+      $from = $message->mailbox;
+    }
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+  }
+  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output .= theme('item_list', $items);
+  $output .= theme('pager', 25);
+  $output .= "</div></div>\n";
+  return $output;
+}
+
+/**
+ * Helper function to simplify setting the breadcrumb on mailarchive pages.
+ */
+function _mailarchive_view_set_breadcrumb($sid, $mid = 0) {
+  if ($mid) {
+    $subscription = _mailarchive_subscription_load($sid);
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive), l(t($subscription->urlname), 'mailarchive/'. $subscription->urlname)));
+  }
+  else {
+    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive)));
+  }
+}
+
+/**
+ * Return an array of subjects extracted from the current message.
+ */
+function _mailarchive_view_get_subjects($sid, $mid) {
+  $subjects = array();
+  $subjects[] = db_result(db_query('SELECT subject FROM {mailarchive_messages} WHERE sid = %d and mid = %d', $sid, $mid));
+  // Remove common prefixes from subject.
+  $subjects[0] = ltrim(preg_replace('/^(re:)||^(fw:)/i', '', $subjects[0]));
+
+  // Extract (was: ...) or [was: ...] style previous subjects.
+  preg_match('&(.*)(\[)?(\()?was:( *)(.*)(\])?(\))?&i', $subjects[0], $match);
+  if (isset($match[5])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[5]), ' \t\n\r\0)]');
+  }
+  if (isset($match[1])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[1]), ' \t\n\r\0([');
+  }
+
+  // Extract (re: ...) or [re: ...] style previous subjects.
+  preg_match('&(.*)(\[)?(\()?re:( *)(.*)(\])?(\))?&i', $subjects[0], $match);
+  if (isset($match[5])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[5]), ' \t\n\r\0)]');
+  }
+  if (isset($match[1])) {
+    $subjects[] = trim(preg_replace('/^(re:)||^(fw:)/i', '', $match[1]), ' \t\n\r\0)]');
+  }
+
+  return $subjects;
+}
+
+function _mailarchive_view_search_subjects($sid, $subjects, $limit = 10) {
+  $filter = '';
+  foreach ($subjects as $subject) {
+    if ($filter) {
+      $filter .= " OR m.subject LIKE '%%". db_escape_string($subject) ."%%'";
+    }
+    else {
+      $filter = " AND (m.subject LIKE '%%". db_escape_string($subject) ."%%'";
+    }
+  }
+  $filter .= ')';
+  return pager_query("SELECT m.mid, m.subject, m.received, a.name, a.mailbox FROM {mailarchive_messages} m JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = $sid $filter AND address_type = 'from' ORDER BY m.received DESC", $limit);
+}
+
+// TODO: This function is unused.
+function theme_mailarchive_view_content($node, $teaser=FALSE) {
+  //$output = "<div class=\"mailarchive\" id=\"mailarchive-$node->lid\">\n";
+  $output = "<div class=\"mailarchive\">\n";
+  $output .= $node->body;
+  if ($node->messages) {
+    $output .= '<p>'. l(t('%messages messages.', array('%messages' => $node->messages)), "mailarchive/$node->lid/overview/thread"). '  '. t('The last message was posted %time ago.', array('%time' => format_interval(time() - $node->last))) .'</p>';
+  }
+  else {
+    $output .= '<p>'. t('There have been no messages posted to this mailing list.') .'</p>';
+  }
+  $output .= "</div>\n";
+
+  $node->body = $output;
+  $node = node_prepare($node, $teaser);
+}
+

@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.5 2007/09/07 23:35:36 jeremy Exp $
+// $Id: mailarchive.install,v 1.6 2007/09/08 17:12:50 jeremy Exp $
 
 /**
  * Mailarchive module database schema.
