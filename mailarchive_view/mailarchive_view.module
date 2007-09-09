@@ -39,14 +39,33 @@ function mailarchive_view_menu($may_cache) {
   else {
     if ($sid = _mailarchive_sid(arg(1))) {
       $mailarchive = arg(1);
+      $year = (int)arg(2);
+      $month = (int)arg(3);
+      $day = (int)arg(4);
+      $mid = arg(5);
+      if ((strlen(arg(2)) != 4) && (arg(3) != 'search')) {
+        // Could be an old-style URL, let's check.
+        $date = db_fetch_object(db_query('SELECT year, month, day FROM {mailarchive_messages} WHERE sid = %d AND mid = %d', $sid, arg(2)));
+        if ($date->year && $date->month && $date->day) {
+          // Yes, it's an old-style URL, redirect to correct URL.
+          drupal_goto("mailarchive/$mailarchive/$date->year/$date->month/$date->day/$year");
+        }
+      }
       $items[] = array('path' => "mailarchive/$mailarchive",
         'type' => MENU_SUGGESTED_ITEM,
-        'callback' => 'mailarchive_view_mailarchive',
+        'callback' => 'mailarchive_view_mailarchive_overview',
+        'callback arguments' => array($mailarchive, $year, $month, $day),
         'access' => user_access('access mailing list archives')
       );
-      $mid = arg(2);
-      if (is_numeric($mid)) {
+      $items[] = array('path' => "mailarchive/$mailarchive/$year/$month/$day",
+        'type' => MENU_SUGGESTED_ITEM,
+        'callback' => 'mailarchive_view_mailarchive',
+        'callback arguments' => array($mailarchive, $year, $month, $day, $mid),
+        'access' => user_access('access mailing list archives')
+      );
+      if (is_numeric(arg(2))) {
         if (arg(3) == 'search') {
+          $mid = (int)arg(2);
           switch (arg(4)) {
             case 'subject':
               $items[] = array(
@@ -175,30 +194,98 @@ function mailarchive_view_display_subscriptions($tid, $depth = 0) {
   return $rows ? $rows : array();
 }
 
+function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $month = NULL) {
+  $sid = _mailarchive_sid($mailarchive);
+  if ($year == NULL) {
+    _mailarchive_view_set_breadcrumb($sid);
+    drupal_set_title(t("!list mailing list", array('!list' => $mailarchive)));
+    $header = array(t('Year'), t('Messages'));
+    $result = db_query('SELECT COUNT(year) AS messages, year FROM {mailarchive_messages} WHERE sid = %d GROUP BY year DESC', $sid);
+    while ($list = db_fetch_object($result)) {
+      $row = array();
+      $row[] = l($list->year, "mailarchive/$mailarchive/$list->year");
+      $row[] = l($list->messages, "mailarchive/$mailarchive/$list->year");
+      $rows[] = $row;
+    }
+  }
+  else if ($month == NULL) {
+    _mailarchive_view_set_breadcrumb($sid, 1);
+    drupal_set_title(t("!list mailing list", array('!list' => $mailarchive, '!year' => $year)));
+    $header = array(t('Month'), t('Messages'));
+    $result = db_query('SELECT COUNT(month) AS messages, month FROM {mailarchive_messages} WHERE sid = %d AND year = %d GROUP BY month DESC', $sid, $year);
+    while ($list = db_fetch_object($result)) {
+      $row = array();
+      $row[] = l(mailarchive_view_format_month($list->month) ." $year", "mailarchive/$mailarchive/$year/$list->month");
+      $row[] = l($list->messages, "mailarchive/$mailarchive/$year/$list->month");
+      $rows[] = $row;
+    }
+  }
+  else if ($day == NULL) {
+    _mailarchive_view_set_breadcrumb($sid, 1, $year);
+    drupal_set_title(t("!list mailing list", array('!list' => $mailarchive, '!year' => $year, '!month' => mailarchive_view_format_month($month))));
+    $header = array(t('Day'), t('Messages'));
+    $result = db_query('SELECT COUNT(day) AS messages, day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d GROUP BY day DESC', $sid, $year, $month);
+    while ($list = db_fetch_object($result)) {
+      $row = array();
+      $row[] = l(mailarchive_view_format_month($month) ." $list->day, $year", "mailarchive/$mailarchive/$year/$month/$list->day");
+      $row[] = l($list->messages, "mailarchive/$mailarchive/$year/$month/$list->day");
+      $rows[] = $row;
+    }
+  }
+  $output = '<div class="mailarchive">';
+  $output .= theme('table', $header, $rows);
+  $output .= '</div>';
+  return $output;
+}
+
+function mailarchive_view_format_month($month) {
+  switch ($month) {
+    case 1:
+      return t('January');
+    case 2:
+      return t('February');
+    case 3:
+      return t('March');
+    case 4:
+      return t('April');
+    case 5:
+      return t('May');
+    case 6:
+      return t('June');
+    case 7:
+      return t('July');
+    case 8:
+      return t('August');
+    case 9:
+      return t('September');
+    case 10:
+      return t('October');
+    case 11:
+      return t('November');
+    case 12:
+      return t('December');
+    default:
+      return t('Unknown');
+  }
+}
+
 /**
  * Decides if page trying to be viewed is a single message or an archive/list.
  * If single message, pass to theme_mailarchive_view_message.
  * If archive, pass to theme_mailarchive_view_thread.
  */
-function mailarchive_view_mailarchive() {
-  // mailarchive / mailing-list-name / message_id
-  // arg(0)      / arg(1)            / arg(2)
-  $mailarchive = arg(1);
-  $messageid = arg(2);
+function mailarchive_view_mailarchive($mailarchive, $year, $month, $day, $messageid = 0) {
 
   if ($messageid) {
     // Display only specified message.
     drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive)));
     $output .= theme('mailarchive_view_message', $mailarchive, $messageid);
   }
-  else if ($mailarchive) {
-    // Display all threads in mailing list.
-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), 'mailarchive')));
-    $output .= theme('mailarchive_view_thread', $mailarchive);
-  }
   else {
-    // No $messageid or $mailarchive, display overview of all mailing lists.
-    mailarchive_view_page();
+    // Display all threads in mailing list.
+    $sid = _mailarchive_sid($mailarchive);
+    _mailarchive_view_set_breadcrumb($sid, 1, $year, $month, $day);
+    $output .= theme('mailarchive_view_thread', $mailarchive, $year, $month, $day);
   }
   return $output;
 }
@@ -207,58 +294,47 @@ function mailarchive_view_mailarchive() {
  * Displays the contents/messages for the archive specified in $mailarchive
  *
  * @param string $mailarchive - contains the "urlname" of the archive to display
- * @param string $period
- * @param string $a
- * @param string $b
+ * @param string $year
+ * @param string $month
+ * @param string $day
  * @return unknown
  */
-function theme_mailarchive_view_thread($mailarchive, $period = 'month', $a = NULL, $b = NULL) {
+function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL, $day = NULL) {
   $sid = _mailarchive_sid($mailarchive);
   if (!$sid) {
     drupal_set_message(t('Unknown mailing list, %mailarchive.', array('%mailarchive' => $mailarchive)));
     drupal_goto('mailarchive');
   }
-  drupal_set_title($mailarchive);
+  drupal_set_title("$mailarchive mailing list");
   $order = isset($_GET['order']) ? $_GET['order'] : '';
   
-  if ($a == NULL) {
-    $a = format_date(time(), 'custom', 'm');
+/*
+  if ($year == NULL) {
+    $year = format_date(time(), 'custom', 'Y');
   }
-  if ($b == NULL) {
-    $b = format_date(time(), 'custom', 'Y');
+  if ($month == NULL) {
+    $month = format_date(time(), 'custom', 'm');
   }
-  switch ($period) {
-    case 'day':
-      $a--;
-      $sql_range = " AND day = $a AND year = $b";
-      break;
-    case 'week':
-      $sql_range = " AND week = $a AND year = $b";
-      break;
-    case 'month':
-      default:
-      $sql_range = " AND month = $a AND year = $b";
-      break;
-    case 'year':
-      $sql_range = "AND year = $a";
-      break;
+  if ($day == NULL) {
+    $day = format_date(time(), 'custom', 'd');
   }
-
+*/
+  $sql_range = "year = $year AND month = $month AND day = $day";
   $messages_per_page = ((int)$_GET['messages_per_page'] ? (int)$_GET['messages_per_page'] : 25);
 
   $output = "<div class=\"mailarchive\"><div class=\"message-list\" id=\"message-list-$mailarchive\">\n";
 
   $header = array(
-    array('data' => t('Subject'), 'field' => 'm.thread_id', 'sort' => 'desc'),
-    array('data' => t('From'), 'field' => 'a.name'),
-    array('data' => t('Date'), 'field' => 'm.received')
+    array('data' => t('Subject'), 'field' => 'thread_id', 'sort' => 'desc'),
+    array('data' => t('From'), 'field' => 'mailfrom'),
+    array('data' => t('Date'), 'field' => 'received')
   );
   
   // TODO: Fix this to be threaded and sorted properly.
   // Get list of messages in current group.
-  $sql = "SELECT m.mid, m.received, m.subject, a.name, a.mailbox, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from' AND m.sid = $sid";
-  $sql .= tablesort_sql($header) .', m.sub_thread_id DESC';
-  $result = pager_query($sql, $messages_per_page, 0, "SELECT COUNT(m.thread_id) FROM {mailarchive_messages} m WHERE m.sid = %d", $sid);
+  $sql = "SELECT mid, received, year, month, day, subject, mailfrom, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE $sql_range AND sid = $sid";
+  $sql .= tablesort_sql($header) .', sub_thread_id DESC';
+  $result = pager_query($sql, $messages_per_page, 0, "SELECT COUNT(thread_id) FROM {mailarchive_messages} WHERE $sql_range AND sid = %d", $sid);
   
   $output .= "<div class=\"message-list-thread\" id =\"message-list-$mailarchive\">\n";
   while ($message = db_fetch_object($result)) {
@@ -280,13 +356,12 @@ function theme_mailarchive_view_thread($mailarchive, $period = 'month', $a = NUL
       $message->subject = t('(No subject)');
     }
     $subject = '<div class="message-list-thread-line" style="margin-left: '. ($message->depth * 15) .'px;">';
-    $subject .= ' <span class="message-list-thread-subject">'. l($message->subject, "mailarchive/$mailarchive/$message->mid") .'</span>';
+    $subject .= ' <span class="message-list-thread-subject">'. l($message->subject, "mailarchive/$mailarchive/$message->year/$message->month/$message->day/$message->mid") .'</span>';
     $subject .= "</div>\n";
     $row[] = $subject;
 
     // From row:
-    $mailfrom = $message->name ? $message->name : $message->mailbox;
-    $row[] = (strlen($mailfrom) > 24 ? substr(htmlspecialchars($mailfrom), 0, 20). '...' : htmlspecialchars($mailfrom));
+    $row[] = (strlen($message->mailfrom) > 24 ? substr(htmlspecialchars($message->mailfrom), 0, 20). '...' : htmlspecialchars($message->mailfrom));
 
     // Date row
     $row[] = format_date($message->received, 'custom', 'M j, g:i a Y');
@@ -297,8 +372,91 @@ function theme_mailarchive_view_thread($mailarchive, $period = 'month', $a = NUL
   $output .= theme('table', $header, $rows);
   $output .= theme('pager', NULL, $messages_per_page, 0, NULL);
 
+  $output .= theme('table', array(t('previous day'), t('today'), t('next day')), array(array(mailarchive_view_day_nav($mailarchive, $year, $month, $day, '<'), mailarchive_view_format_month($month) ." $day, $year", mailarchive_view_day_nav($mailarchive, $year, $month, $day, '>'))));
+
   $output .= "</div></div></div>\n";
   return $output;
+}
+
+/**
+ * Return the previous or next day with messages, if any.
+ */
+function mailarchive_view_day_nav($mailarchive, $year, $month, $day, $op) {
+  if ($op == '<') {
+    $order = 'DESC';
+  }
+  else {
+    $order = 'ASC';
+  }
+  $sid = _mailarchive_sid($mailarchive);
+  // Start with a quick search in the same month.
+  $found = db_result(db_query("SELECT day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day $op %d GROUP BY day $order LIMIT 1", $sid, $year, $month, $day));
+  if (!$found) {
+    // Try another quick search
+    if ($op == '<') {
+      if ($month > 1) {
+        $month2 = $month - 1;
+        $year2 = $year;
+      }
+      else {
+        $month2 = 12;
+        $year2 = $year - 1;
+      }
+    }
+    else {
+      if ($month < 12) {
+        $month2 = $month + 1;
+        $year2 = $year;
+      }
+      else {
+        $month2 = 01;
+        $year2 = $year + 1;
+      }
+    }
+    $found = db_result(db_query("SELECT day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day $op %d GROUP BY day $order LIMIT 1", $sid, $year2, $month2, $day));
+    if (!$found) {
+      // Quick searches aren't working, expand our search.
+      $found = db_fetch_object(db_query("SELECT year, month, day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month $op= %d ORDER BY month $order, day $order LIMIT 1", $sid, $year2, $month2));
+      if (!$found->day) {
+        // Still nothing, do a full search.
+        $found = db_fetch_object(db_query("SELECT year, month, day FROM {mailarchive_messages} WHERE sid = %d AND year $op %d ORDER BY year $order, month $order, day $order LIMIT 1", $sid, $year));
+        if ($found) {
+          $day = $found->day;
+          $month = $found->month;
+          $year = $found->year;
+        }
+        else {
+          $day = $month = $year = NULL;
+        }
+      }
+      else {
+        $day = $found->day;
+        $month = $found->month;
+        $year = $found->year;
+      }
+    }
+    else {
+      $day = $found;
+      $month = $month2;
+      $year = $year2;
+    }
+  }
+  else {
+    $day = $found;
+  }
+
+  if ($day && $month && $year) {
+    return l(mailarchive_view_format_month($month) ." $day, $year", "mailarchive/$mailarchive/$year/$month/$day");
+  }
+  else {
+    return t('None');
+  }
+}
+
+/**
+ * Return the next day with messages, if any.
+ */
+function mailarchive_view_day_next($mailarchive, $year, $month, $day) {
 }
 
 /**
@@ -419,7 +577,7 @@ function theme_mailarchive_view_message_thread_messages($mailarchive, $message) 
   $output .= '<b>'. t('Messages in current thread:') .'</b>';
 	
   // List messages in this thread ordered by when received.
-  $result = db_query("SELECT m.mid, m.received, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = %d AND m.thread_id = %d AND a.address_type = 'from' ORDER BY m.sub_thread_id DESC", $message->sid, $message->thread_id);
+  $result = db_query("SELECT m.mid, m.received, m.year, m.month, m.day, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = %d AND m.thread_id = %d AND a.address_type = 'from' ORDER BY m.sub_thread_id DESC", $message->sid, $message->thread_id);
 	   
   $i = 0;
   $output .= "<div class=\"message-list-thread\">\n";
@@ -441,7 +599,7 @@ function theme_mailarchive_view_message_thread_messages($mailarchive, $message) 
       $output .= "<span class=\"message-list-thread-subject\">$subject</span>";
     } 
     else {
-      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/$thread->mid", array('title' => $thread->subject)) .'</span>';
+      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/$thread->year/$thread->month/$thread->day/$thread->mid", array('title' => $thread->subject)) .'</span>';
     }
     $output .= "<span class=\"message-list-thread-from\">, $from</span>";
     $output .= '<span class="message-list-thread-date">, ('. format_date($thread->received, 'custom', 'D M j, g:i a') .")</span>";
@@ -461,7 +619,7 @@ function theme_mailarchive_view_message_thread_messages($mailarchive, $message) 
     while ($current = db_fetch_object($result)) {
       $i++;
       $from = $current->name ? $current->name : $current->mailbox;
-      $subject = $current->mid == $message->mid ? $current->subject : l($current->subject, "mailarchive/$subscription->urlname/$current->mid");
+      $subject = $current->mid == $message->mid ? $current->subject : l($current->subject, "mailarchive/$subscription->urlname/$current->year/$current->month/$current->day/$current->mid");
       $items[] = $subject .' by '. l($from, "mailarchive/$subscription->urlname/$current->mid/search/from-name") .' on '. format_date($current->received, 'custom', 'M j, g:i a Y');
     }
     if ($i > 1) {
@@ -603,14 +761,19 @@ function mailarchive_view_search_from_address($sid, $mid) {
 /**
  * Helper function to simplify setting the breadcrumb on mailarchive pages.
  */
-function _mailarchive_view_set_breadcrumb($sid, $mid = 0) {
+function _mailarchive_view_set_breadcrumb($sid, $mid = NULL, $year = NULL, $month = NULL, $day = NULL) {
+  $breadcrumb = array(l(t('Home'), NULL), l(t('Mailing list archives'), 'mailarchive'));
   if ($mid) {
     $subscription = _mailarchive_subscription_load($sid);
-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive), l(t($subscription->urlname), 'mailarchive/'. $subscription->urlname)));
+    $breadcrumb[] = l(t($subscription->urlname), "mailarchive/$subscription->urlname");
   }
-  else {
-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive)));
+  if ($year) {
+    $breadcrumb[] = l($year, "mailarchive/$subscription->urlname/$year");
   }
+  if ($month) {
+    $breadcrumb[] = l(mailarchive_view_format_month($month), "mailarchive/$subscription->urlname/$year/$month");
+  }
+  drupal_set_breadcrumb($breadcrumb);
 }
 
 /**
@@ -654,7 +817,7 @@ function _mailarchive_view_search_subjects($sid, $subjects, $limit = 10) {
     }
   }
   $filter .= ')';
-  return pager_query("SELECT m.mid, m.subject, m.received, a.name, a.mailbox FROM {mailarchive_messages} m JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = $sid $filter AND address_type = 'from' ORDER BY m.received DESC", $limit);
+  return pager_query("SELECT m.mid, m.subject, m.received, m.year, m.month, m.day, a.name, a.mailbox FROM {mailarchive_messages} m JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.sid = $sid $filter AND address_type = 'from' ORDER BY m.received DESC", $limit);
 }
 
 // TODO: This function is unused.

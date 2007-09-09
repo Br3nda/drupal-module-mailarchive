@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.6 2007/09/08 17:12:50 jeremy Exp $
+// $Id: mailarchive.install,v 1.7 2007/09/09 15:18:05 jeremy Exp $
 
 /**
  * Mailarchive module database schema.
@@ -49,6 +49,7 @@ function mailarchive_install() {
         multiple_in_reply_to int(1) NOT NULL DEFAULT '0',
         thread_id int(11) UNSIGNED NOT NULL DEFAULT '0',
         sub_thread_id varchar(255) NOT NULL DEFAULT '0',
+        mailfrom varchar(255) NOT NULL DEFAULT '',
         subject varchar(255) NOT NULL DEFAULT '',
         body text NOT NULL DEFAULT '',
         attachments int(3) UNSIGNED DEFAULT '0',
@@ -57,6 +58,9 @@ function mailarchive_install() {
         UNIQUE (sid, message_id),
         KEY (created),
         KEY (received),
+        KEY (year),
+        KEY (month),
+        KEY (day),
         KEY (message_id),
         KEY (thread_id),
         KEY (sub_thread_id),
@@ -132,3 +136,30 @@ function mailarchive_update_1() {
   return $ret;
 }
 
+/**
+ * Index year, month and day in mailarchive_messages table.
+ */
+function mailarchive_update_2() {
+  $ret = array();
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (year)");
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (month)");
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (day)");
+  return $ret;
+}
+
+/**
+ * Add from address to mailarchive_messages table to optimize browsing of
+ * mail archives.
+ */
+function mailarchive_update_3() {
+  $ret = array();
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD mailfrom varchar(255) NOT NULL DEFAULT '' AFTER sub_thread_id");
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (mailfrom)");
+  // This could take a long time...
+  set_time_limit(0);
+  $result = db_query("SELECT m.mid, a.name, a.mailbox FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from'");
+  while ($message = db_fetch_object($result)) {
+    db_query("UPDATE {mailarchive_messages} SET mailfrom = '%s' WHERE mid = %d", $message->name ? $message->name : $message->mailbox, $message->mid);
+  }
+  return $ret;
+}
