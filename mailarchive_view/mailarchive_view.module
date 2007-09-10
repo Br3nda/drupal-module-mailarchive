@@ -275,15 +275,14 @@ function mailarchive_view_format_month($month) {
  * If archive, pass to theme_mailarchive_view_thread.
  */
 function mailarchive_view_mailarchive($mailarchive, $year, $month, $day, $messageid = 0) {
-
+  $sid = _mailarchive_sid($mailarchive);
   if ($messageid) {
     // Display only specified message.
-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Mailing list archives'), mailarchive), l(t($mailarchive), 'mailarchive/'. $mailarchive)));
+    _mailarchive_view_set_breadcrumb($sid, $messageid, $year, $month, $day);
     $output .= theme('mailarchive_view_message', $mailarchive, $messageid);
   }
   else {
     // Display all threads in mailing list.
-    $sid = _mailarchive_sid($mailarchive);
     _mailarchive_view_set_breadcrumb($sid, 1, $year, $month, $day);
     $output .= theme('mailarchive_view_thread', $mailarchive, $year, $month, $day);
   }
@@ -690,7 +689,7 @@ function mailarchive_view_search_subject($sid, $mid) {
     else {
       $from = $message->mailbox;
     }
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). ' by '. l($from, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). ' by '. l($from, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
   }
   $output = '<div class="mailarchive"><div class="search-subject">';
   $output .= theme('item_list', $items);
@@ -710,7 +709,7 @@ function mailarchive_view_search_from_name($sid, $mid) {
   drupal_set_title(t('Messages in %subscription from: %name', array('%subscription' => $subscription->urlname, '%name' => $name))); 
   _mailarchive_view_set_breadcrumb($sid, $mid);
   // Display list of messages by name.
-  $result = pager_query("SELECT m.subject, m.received, a.mid, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE name = '". addslashes($name) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC", 25);
+  $result = pager_query("SELECT m.subject, m.received, m.year, m.month, m.day, a.mid, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE name = '". addslashes($name) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC", 25);
   $items = array();
   while ($message = db_fetch_object($result)) {
     if ($message->name) {
@@ -719,7 +718,7 @@ function mailarchive_view_search_from_name($sid, $mid) {
     else {
       $from = $message->mailbox;
     }
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
   }
   $output = '<div class="mailarchive"><div class="search-subject">';
   $output .= theme('item_list', $items);
@@ -739,7 +738,7 @@ function mailarchive_view_search_from_address($sid, $mid) {
   drupal_set_title(t('Messages in %subscription from: %address (domain blocked)', array('%subscription' => $subscription->urlname, '%address' => $from->mailbox .'@...'))); 
   _mailarchive_view_set_breadcrumb($sid, $mid);
   // Display list of messages by name.
-  $sql = "SELECT m.mid, m.subject, m.received, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE address = '". addslashes($from->address) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC";
+  $sql = "SELECT m.mid, m.subject, m.received, m.year, m.month, m.day, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE address = '". addslashes($from->address) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC";
   $result = pager_query($sql, 25);
   $items = array();
   while ($message = db_fetch_object($result)) {
@@ -749,7 +748,7 @@ function mailarchive_view_search_from_address($sid, $mid) {
     else {
       $from = $message->mailbox;
     }
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
   }
   $output = '<div class="mailarchive"><div class="search-subject">';
   $output .= theme('item_list', $items);
