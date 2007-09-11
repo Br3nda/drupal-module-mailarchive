@@ -34,7 +34,8 @@ function mailarchive_view_menu($may_cache) {
     $items[] = array('path' => 'mailarchive',
       'title' => t('Mailing list archives'),
       'access' => user_access('access mailing list archives'),
-      'callback' => 'mailarchive_view_page');
+      'callback' => 'mailarchive_view_page',
+      'callback arguments' => (int)arg(1));
   }
   else {
     if ($sid = _mailarchive_sid(arg(1))) {
@@ -104,6 +105,18 @@ function mailarchive_view_menu($may_cache) {
 }
 
 /**
+ * Drupal nodeapi _view hook. 
+ */
+function mailarchive_view(&$node, $teaser = FALSE, $page = FALSE) {
+  $node = node_prepare($node, $teaser);
+  $node->content['overview'] = array(
+    '#value' => mailarchive_view_mailarchive_overview($node->urlname),
+    '#weight' => 1,
+  );
+  return $node;
+}
+
+/**
  * Display the mailarchive user overview page, listing all mailing list
  * archives.
  */
@@ -111,6 +124,9 @@ function mailarchive_view_page($tid = 0) {
   if (module_exists('taxonomy')) {
     $header = array(t('Mailing list archive'), t('Messages'), t('Last message'));
     if ($tid) {
+      _mailarchive_view_set_breadcrumb(1);
+      $name = db_result(db_query('SELECT name FROM term_data WHERE tid = %d', $tid));
+      drupal_set_title(t('!name mailing list archives', array('!name' => $name)));
       $rows = mailarchive_view_display_subscriptions($tid);
     }
     $tree = taxonomy_get_tree(_mailarchive_get_vid(), $tid);
@@ -472,7 +488,6 @@ function theme_mailarchive_view_message ($mailarchive, $messageid) {
     $output .= theme('mailarchive_view_message_header', $mailarchive, $message);
     $output .= theme('mailarchive_view_message_body', $mailarchive, $message);
     $output .= theme('mailarchive_view_message_thread_messages', $mailarchive, $message);
-    //$output .= theme('mailarchive_message_rethread_messages', $mailarchive, $message);
     // TODO: This query has awful performance, fix it then re-enable.
     //$output .= theme('mailarchive_message_footer', $mailarchive, $message);
     $output .= '</div>';
@@ -546,22 +561,6 @@ function theme_mailarchive_view_message_body($mailarchive, $message) {
   
   return $output;
 }
-
-/*
-function theme_mailarchive_message_rethread_messages($mailarchive, $message) {
-  $output .= '<b>'. t('Parent picker:') .'</b>';
-  $result = db_query("SELECT m.mid, m.received, m.subject, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m WHERE m.sid = %d AND m.subject LIKE '%%%s%%'", $message->sid, $message->subject);
-  while ($m = db_fetch_object($result)) {
-    $output .= "<div>". l($m->subject, "mailarchive/$mailarchive/$m->mid");
-    if ($m->sub_thread_id != '1/') {
-      $output .= ' [has parent] ';
-    }
-    $output .= " (". l('parent', "mailarchive/$mailarchive/$m->mid/makeparent") .")";
-    $output .= "</div>";
-  }
-  return $output;
-}
-*/
 
 /**
  * outputs the threaded list of messages in the current thread (the thread containing $message)

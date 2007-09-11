@@ -28,3 +28,9 @@ Credits:
 --------
  - Written by Jeremy Andrews <jeremy@kerneltrap.org>
  - Maintained by Jeremy Andrews <jeremy@kerneltrap.org>
+
+
+Example:
+--------
+ - http://kerneltrap.org/mailarchive
+

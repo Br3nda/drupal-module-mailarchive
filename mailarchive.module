@@ -549,8 +549,6 @@ function mailarchive_admin_overview() {
     drupal_set_message('The mailarchive module currently requires that you create a taxonomy vocabulary for use with mailing list archives.');
   }
   return theme('table', $header, $rows);
-
-
 }
 
 /**
@@ -1207,25 +1205,21 @@ function _mailarchive_get_message_body($stream, $message, $structure, $part = 1)
     }
     switch ($structure->encoding) {
       case 3: // base64
-        return drupal_convert_to_utf8(imap_base64($body), $encoding);
+        $decoded = drupal_convert_to_utf8(imap_base64($body), $encoding);
       case 4: // quoted-printable
-        return drupal_convert_to_utf8(quoted_printable_decode($body), $encoding);
+        $decoded = drupal_convert_to_utf8(quoted_printable_decode($body), $encoding);
       default:
-        return drupal_convert_to_utf8($body, $encoding);
+        $decoded = drupal_convert_to_utf8($body, $encoding);
     }
 
-    if ($structure->type == 1) { // Primary body type: 1 = multipart
-      while (list($index, $substructure) = each($structure->parts)) {
-        if ($part) {
-          $prefix = $part .'.';
-        }
-        if ($body = _mailarchive_get_message_body($stream, $message, $substructure, $prefix . ($index + 1))) {
-          if ($body) {
-            return $body;
-          }
-        }
-      }
+    if ($decoded) {
+      return ($decoded);
     }
+    else {
+      watchdog('mailarchive', t("Unexpected error converting message body."));
+      return ($body);
+    }
+
   }
   return NULL;
 }
