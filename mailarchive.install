@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.7 2007/09/09 15:18:05 jeremy Exp $
+// $Id: mailarchive.install,v 1.8 2007/09/11 01:30:27 jeremy Exp $
 
 /**
  * Mailarchive module database schema.
@@ -158,6 +158,26 @@ function mailarchive_update_3() {
   // This could take a long time...
   set_time_limit(0);
   $result = db_query("SELECT m.mid, a.name, a.mailbox FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from'");
+  while ($message = db_fetch_object($result)) {
+    db_query("UPDATE {mailarchive_messages} SET mailfrom = '%s' WHERE mid = %d", $message->name ? $message->name : $message->mailbox, $message->mid);
+  }
+  return $ret;
+}
+
+/**
+ * Index reference and in_reply_to columns mailarchive_messages table, as we
+ * search them each time we add a message.
+ */
+function mailarchive_update_4() {
+  $ret = array();
+  // This could take a very long time if you have large mailarchives.
+  set_time_limit(0);
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (reference)");
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (in_reply_to)");
+  // This could take a long time...
+  // We do this again, as we neglected to add logic to add mailfrom on newly
+  // fetched mail.
+  $result = db_query("SELECT m.mid, a.name, a.mailbox FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from' AND mailfrom = ''");
   while ($message = db_fetch_object($result)) {
     db_query("UPDATE {mailarchive_messages} SET mailfrom = '%s' WHERE mid = %d", $message->name ? $message->name : $message->mailbox, $message->mid);
   }

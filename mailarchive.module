@@ -622,7 +622,7 @@ function mailarchive_admin_update() {
   $sid = (int)db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $urlname));
   if ($sid) {
     $count = db_result(db_query('SELECT COUNT(*) FROM {mailarchive_messages} WHERE sid = %d', $sid));
-    $last = db_result(db_query('SELECT MAX(created) FROM {mailarchive_messages} WHERE sid = %d', $sid));
+    $last = db_result(db_query('SELECT MAX(received) FROM {mailarchive_messages} WHERE sid = %d', $sid));
     db_query('UPDATE {mailarchive_subscriptions} SET message_count = %d, last_message = %d WHERE sid = %d', $count, $last, $sid);
     drupal_set_message(t('Mailing list %list updated.', array('%list' => $urlname)));
   }
@@ -808,6 +808,21 @@ function _mailarchive_delete_subscription($sid) {
 function _mailarchive_message_save($subscription, $stream, $header, $message) {
   // TODO: lock mailarchive_messages table
   
+  // Gather some data for optimizing queries that don't need to span the entire subscription but can instead be limited to the
+  // current week.
+  $year = date('Y', $header->udate);
+  $month = date('m', $header->udate);
+  $day = date('d', $header->udate);
+  $spans_year = $spans_month = FALSE;
+  if (($day - 7) < 1) {
+    if (($month -1) < 1) {
+      $spans_year = TRUE;
+    }
+    else {
+      $spans_month = TRUE;
+    }
+  }
+
   // Attempt to grab the message reference, if existing
   $reference = rtrim(ltrim(substr(strrchr($header->reference, '<'), 0), '<'), '>');
 
@@ -847,7 +862,9 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   if ($reference || $in_reply_to) {
     if ($multiple_in_reply_to) {
       foreach ($in_reply_to as $reply_message_id) {
-        $parent = db_fetch_object(db_query("SELECT MAX(thread_id) AS thread_id, MAX(sub_thread_id) AS sub_thread_id FROM {mailarchive_messages} WHERE sid = %d and message_id = '%s'", $subscription->sid, $reply_message_id));
+        // We were doing a max() on the thread_id and sub_thread_id which seems odd -- and was also very inefficient.  On the off
+        // chance that we see a duplicate message_id, we'll just use LIMIT 1.
+        $parent = db_fetch_object(db_query("SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d and message_id = '%s' LIMIT 1", $subscription->sid, $reply_message_id));
         if ($parent->thread_id) {
           // We found a valid parent that we are in_reply_to.
           $in_reply_to = $reply_message_id;
@@ -857,11 +874,13 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
     }
     else if ($in_reply_to) {
       // Look for parent referenced in in_reply_to.
-      $parent = db_fetch_object(db_query("SELECT MAX(thread_id) AS thread_id, MAX(sub_thread_id) AS sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id = '%s'", $subscription->sid, $in_reply_to));
+      $parent = db_fetch_object(db_query("SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id = '%s' LIMIT 1", $subscription->sid, $in_reply_to));
     }
     else {
       // Look for parent referenced in reference.
-      $parent = db_fetch_object(db_query('SELECT MAX(thread_id) AS thread_id, MAX(sub_thread_id) AS sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id LIKE "%%%s%%"', $subscription->sid, $reference));
+      // TODO: This one is going to be expensive... we should query a smaller section first, then slowly expand.
+      drupal_set_message('TODO: We hit an expensive query, optimize it! A22C');
+      $parent = db_fetch_object(db_query('SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id LIKE "%%%s%%"', $subscription->sid, $reference));
     }
   }
 
@@ -895,7 +914,20 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   }
   else {
     // This message has no parent.
-    $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {mailarchive_messages} WHERE sid = %d', $subscription->sid));
+    if ($spans_year) {
+      // We're less than 7 days into the month of January, so search all of this
+      // January, and all of December the previous year.
+      $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {mailarchive_messages} WHERE sid = %d AND ((year = %d AND month = %d) OR (year = %d AND month = 12))', $subscription->sid, $year, $month, $year - 1));
+    }
+    else if ($spans_month) {
+      // We're less than 7 days into the current months, so search all of this
+      // month and the previous month.
+      $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND (month = %d OR month = %d)', $subscription->sid, $year, $month, $month - 1));
+    }
+    else {
+      // We're more than 7 days into the current month, so search only this month.
+      $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d', $subscription->sid, $year, $month));
+    }
     $thread_id = (int)++$previous_id;
     $sub_thread_id = '1/';
   }
@@ -915,8 +947,16 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   $structure = imap_fetchstructure($stream, $message);
   $body = _mailarchive_get_message_body($stream, $message, $structure);
 
+  $mailfrom = $header->from;
+  if ($mailfrom[0]->personal) {
+    $mailfrom = _mailarchive_mime_decode($mailfrom[0]->personal);
+  }
+  else {
+    $mailfrom = _mailarchive_mime_decode($mailfrom[0]->mailbox);
+  }
+
   // Save the new message.
-  db_query("INSERT INTO {mailarchive_messages} (sid, created, received, year, month, day, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, subject, body, attachments) VALUES (%d, %d, %d, %d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', %d)", $subscription->sid, time(), $header->udate, format_date($header->udate, 'custom', 'Y'), format_date($header->udate, 'custom', 'm'), format_date($header->udate, 'custom', 'd'), serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
+  db_query("INSERT INTO {mailarchive_messages} (sid, created, received, year, month, day, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, mailfrom, subject, body, attachments) VALUES (%d, %d, %d, %d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', '%s', %d)", $subscription->sid, time(), $header->udate, $year, $month, $day, serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, $mailfrom, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
   $mid = db_result(db_query("SELECT mid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
 
   // If enabled, download any attachments.
@@ -941,8 +981,25 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   }
 
   // Check if replies to this messages are already archived, message may have
-  // arrived out of order.
-  $child = db_fetch_object(db_query("SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%')", $subscription->sid, $message_id, $message_id));
+  // arrived out of order.  To optimize query, we only search 1-5 weeks worth
+  // of data (a minimum of 7 days).
+  if ($spans_year) {
+    // We're less than 7 days into the month of January, so search all of this
+    // January, and all of December the previous year.
+    $child = db_fetch_object(db_query("SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND ((year = %d AND month = %d) OR (year = %d AND month = 12))", $subscription->sid, $message_id, $message_id, $year, $month, $year - 1));
+  }
+  else if ($spans_month) {
+    // We're less than 7 days into the current months, so search all of this
+    // month and the previous month.
+    $child = db_fetch_object(db_query("SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND year = %d AND (month = %d OR month = %d)", $subscription->sid, $message_id, $message_id, $year, $month, $month - 1));
+  }
+  else {
+    // We're more than 7 days into the current month, so search only this
+    // month.  We're assuming that a message won't get lost for more than 7
+    // days.
+    $child = db_fetch_object(db_query("SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND year = %d AND month = %d", $subscription->sid, $message_id, $message_id, $year, $month));
+  }
+  
   if ($child->thread_id) {
     _mailarchive_rethread($subscription->sid, $child->thread_id);
   }
