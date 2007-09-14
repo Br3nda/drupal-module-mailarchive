@@ -1,4 +1,5 @@
-; $Id: mailarchive_view.info,v 1.2 2007/09/09 15:18:05 jeremy Exp $
+; $Id: mailarchive_view.info,v 1.3 2007/09/14 19:17:08 jeremy Exp $
 name = Mail Archive View
 description = View online mailing list archives.
 dependencies = taxonomy mailarchive
+package = Mail Archive

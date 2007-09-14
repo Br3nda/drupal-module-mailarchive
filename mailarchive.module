@@ -860,8 +860,9 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   if ($reference || $in_reply_to) {
     if ($multiple_in_reply_to) {
       foreach ($in_reply_to as $reply_message_id) {
-        // We were doing a max() on the thread_id and sub_thread_id which seems odd -- and was also very inefficient.  On the off
-        // chance that we see a duplicate message_id, we'll just use LIMIT 1.
+        // We were doing a max() on the thread_id and sub_thread_id which seems
+        // odd -- and was also very inefficient.  On the off chance that we see
+        // a duplicate message_id, we'll just use LIMIT 1.
         $parent = db_fetch_object(db_query("SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d and message_id = '%s' LIMIT 1", $subscription->sid, $reply_message_id));
         if ($parent->thread_id) {
           // We found a valid parent that we are in_reply_to.
@@ -1216,7 +1217,7 @@ function _mailarchive_get_message_body($stream, $message, $structure, $part = 1)
       return ($decoded);
     }
     else {
-      watchdog('mailarchive', t("Unexpected error converting message body."));
+      watchdog('mailarchive', t("Failed to convert message to utf8 -- using unconverted message.  To fix this, try installing iconv, GNU recode, or mbstring for PHP."));
       return ($body);
     }
 

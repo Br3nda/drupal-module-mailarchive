@@ -34,8 +34,7 @@ function mailarchive_view_menu($may_cache) {
     $items[] = array('path' => 'mailarchive',
       'title' => t('Mailing list archives'),
       'access' => user_access('access mailing list archives'),
-      'callback' => 'mailarchive_view_page',
-      'callback arguments' => (int)arg(1));
+      'callback' => 'mailarchive_view_page');
   }
   else {
     if ($sid = _mailarchive_sid(arg(1))) {
@@ -162,7 +161,7 @@ function mailarchive_view_page($tid = 0) {
  * TODO: Improve performance -- this page is way too slow to load.
  */
 function mailarchive_view_display_subscriptions($tid, $depth = 0) {
-  $result = db_query('SELECT s.sid, s.urlname, n.nid, n.title, s.message_count, s.last_message, t.tid FROM {term_node} t INNER JOIN {node} n ON t.nid = n.nid INNER JOIN {mailarchive_subscriptions} s ON n.nid = s.nid WHERE t.tid = %d', $tid);
+  $result = db_query('SELECT s.sid, s.urlname, n.nid, n.title, s.message_count, s.last_message, t.tid FROM {term_node} t INNER JOIN {node} n ON t.nid = n.nid INNER JOIN {mailarchive_subscriptions} s ON n.nid = s.nid WHERE t.tid = %d ORDER BY last_message DESC', $tid);
   while ($subscription = db_fetch_object($result)) {
     if ($subscription->message_count) {
       $last_message = _mailarchive_time_since($subscription->last_message) .' ago';
@@ -465,10 +464,177 @@ function mailarchive_view_day_nav($mailarchive, $year, $month, $day, $op) {
   }
 }
 
+function theme_mailarchive_view_message_nav($mailarchive, $message) {
+  $output = "\n<div class=\"message-nav\">";
+  $output .= t('Previous message: ');
+  $output .= '['. mailarchive_view_message_thread($mailarchive, $message, '<') .']';
+  $output .= ' ['. mailarchive_view_message_date($mailarchive, $message, '<') .']';
+  $output .= ' ['. mailarchive_view_message_author($mailarchive, $message, '<') .']';
+  $output .= '<br />';
+  $output .= t('Next message: ');
+  $output .= '['. mailarchive_view_message_thread($mailarchive, $message, '>') .']';
+  $output .= ' ['. mailarchive_view_message_date($mailarchive, $message, '>') .']';
+  $output .= ' ['. mailarchive_view_message_author($mailarchive, $message, '>') .']';
+  $output .= '<br />';
+  $output .= "</div>\n";
+  return $output;
+}
+
 /**
- * Return the next day with messages, if any.
+ * Returns next or previous message in current thread (if any).
  */
-function mailarchive_view_day_next($mailarchive, $year, $month, $day) {
+function mailarchive_view_message_thread($mailarchive, $message, $op) {
+  $sid = _mailarchive_sid($mailarchive);
+  $subid = (string)rtrim((string)$message->sub_thread_id, '/');
+  // Look for child message.
+  if ($op == '>') {
+    $new_subid = db_result(db_query("SELECT MAX(sub_thread_id) FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND sub_thread_id LIKE '%s.%%/'", $sid, $message->thread_id, $subid));
+    if ($new_subid) {
+      $message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND sub_thread_id = '%s'", $sid, $message->thread_id, "$new_subid"));
+    }
+    else {
+      $subids = explode('.', $subid);
+      $id = sizeof($subids);
+      while ($id && $subids[--$id] && !$new_mid) {
+        if ($subids[$id] > 1) {
+          $subids[$id] = $subids[$id] - 1;
+        }
+        else {
+          unset($subids[$id]);
+          $subids[$id - 1] = $subids[$id - 1] - 1;
+        }
+        $new_subid = implode('.', $subids);
+        $message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND sub_thread_id = '%s'", $sid, $message->thread_id, "$new_subid/"));
+        $new_mid = $message->mid;
+      }
+    }
+  }
+  else {
+    $subids = explode('.', $subid);
+    $id = sizeof($subids);
+    $new_mid = 0;
+    while ($subids[--$id] && !$new_mid) {
+      unset($subids[$id + 1]);
+      $subids[$id] = $subids[$id] + 1;
+      $new_subid = implode('.', $subids);
+      $new_subid = db_result(db_query("SELECT MIN(sub_thread_id) FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND sub_thread_id LIKE '%s%%'", $sid, $message->thread_id, $new_subid));
+      if ($new_subid) {
+        $message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND sub_thread_id = '%s'", $sid, $message->thread_id, $new_subid));
+        $new_mid = $message->mid;
+      }
+      else {
+        unset($subids[$id]);
+        $new_subid = implode('.', $subids);
+        $message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND sub_thread_id = '%s'", $sid, $message->thread_id, "$new_subid/"));
+        if (is_object($message) && $message->mid) {
+          $new_mid = $message->mid;
+        }
+      }
+    }
+  }
+
+  if (is_object($message)) {
+    return l(t('thread'), "mailarchive/$mailarchive/$message->year/$message->month/$message->day/$message->mid", array('title' => "$message->mailfrom: $message->subject"));
+  }
+  else {
+    return t('thread');
+  }
+}
+
+/**
+ * Returns next or previous message by date (if any).
+ */
+function mailarchive_view_message_date($mailarchive, $message, $op) {
+  $sid = _mailarchive_sid($mailarchive);
+
+  $today = FALSE;
+  if ($op == '>') {
+    $order = 'ASC';
+    $year = date('Y', time());
+    $month = date('n', time());
+    $day = date('j', time());
+    if ($message->year == $year && $message->month == $month && $message->day == $day) {
+      // It is most likely to be today, so we test for this.  If it is, then
+      // we know when scanning for a message later than now that we don't
+      // have to scan anything other than today.
+      // TODO:  Perhaps it's worth instead of checking "today" check if we're
+      // in the same day as the last posting to the mailing list we're browsing.
+      $today = TRUE;
+    }
+  }
+  else {
+    $order = 'DESC';
+  }
+
+  // Scan for messages today.
+  $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day = %d AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->year, $message->month, $message->day, $message->received));
+  if (!is_object($new_message) && !$today) {
+    // Scan for messages this month.
+    $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->year, $message->month, $message->received));
+  }
+  if (!is_object($new_message) && !$today) {
+    // Scan for messages this year.
+    $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->year, $message->received));
+  }
+  if (!is_object($new_message) && !$today) {
+    // Full scan for messages.
+    $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->received));
+  }
+
+  if (is_object($new_message)) {
+    return l(t('date'), "mailarchive/$mailarchive/$new_message->year/$new_message->month/$new_message->day/$new_message->mid", array('title' => "$new_message->mailfrom: $new_message->subject"));
+  }
+  else {
+    return t('date');
+  }
+}
+
+/**
+ * Returns next or previous message by author (if any).
+ */
+function mailarchive_view_message_author($mailarchive, $message, $op) {
+  $sid = _mailarchive_sid($mailarchive);
+
+  $today = FALSE;
+  if ($op == '>') {
+    $order = 'ASC';
+    $year = date('Y', time());
+    $month = date('n', time());
+    $day = date('j', time());
+    if ($message->year == $year && $message->month == $month && $message->day == $day) {
+      // It is most likely to be today, so we test for this.  If it is, then
+      // we know when scanning for a message later than now that we don't
+      // have to scan anything other than today.
+      // TODO:  Perhaps it's worth instead of checking "today" check if we're
+      // in the same day as the last posting to the mailing list we're browsing.
+      $today = TRUE;
+    }
+  }
+  else {
+    $order = 'DESC';
+  }
+
+  // Scan for messages today.
+  $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day = %d AND mailfrom = '%s' AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->year, $message->month, $message->day, $message->mailfrom, $message->received));
+  if (!is_object($new_message) && !$today) {
+    // Scan for messages this month.
+    $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND mailfrom = '%s' AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->year, $message->month, $message->mailfrom, $message->received));
+  }
+  if (!is_object($new_message) && !$today) {
+    // Scan for messages this year.
+    $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND mailfrom = '%s' AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->year, $message->mailfrom, $message->received));
+  }
+  if (!is_object($new_message) && !$today) {
+    // Full scan for messages.
+    $new_message = db_fetch_object(db_query("SELECT year, month, day, mid, mailfrom, subject FROM {mailarchive_messages} WHERE sid = %d AND mailfrom = '%s' AND received $op %d ORDER BY received $order LIMIT 1", $sid, $message->mailfrom, $message->received));
+  }
+
+  if (is_object($new_message)) {
+    return l(t('author'), "mailarchive/$mailarchive/$new_message->year/$new_message->month/$new_message->day/$new_message->mid", array('title' => "$new_message->mailfrom: $new_message->subject"));
+  }
+  else {
+    return t('author');
+  }
 }
 
 /**
@@ -480,14 +646,17 @@ function mailarchive_view_day_next($mailarchive, $year, $month, $day) {
 function theme_mailarchive_view_message ($mailarchive, $messageid) {
   $sid = _mailarchive_sid($mailarchive);
   // TODO: Optimize -- this is a performance killer.
-  $message = db_fetch_object(db_query("SELECT m.mid, m.sid, m.received, m.subject, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.mid = '%d' AND m.sid = %d AND a.address_type = 'from'", $messageid, $sid));
+  $message = db_fetch_object(db_query("SELECT m.mid, m.sid, m.received, m.year, m.month, m.day, m.subject, m.mailfrom, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.mid = '%d' AND m.sid = %d AND a.address_type = 'from'", $messageid, $sid));
   drupal_set_title($message->subject);
 
   if (!empty($message)) {
     $output .= '<div class="mailarchive"><div class="message-thread">';
+    $output .= theme('mailarchive_view_message_nav', $mailarchive, $message);
     $output .= theme('mailarchive_view_message_header', $mailarchive, $message);
     $output .= theme('mailarchive_view_message_body', $mailarchive, $message);
+    $output .= theme('mailarchive_view_message_nav', $mailarchive, $message);
     $output .= theme('mailarchive_view_message_thread_messages', $mailarchive, $message);
+
     // TODO: This query has awful performance, fix it then re-enable.
     //$output .= theme('mailarchive_message_footer', $mailarchive, $message);
     $output .= '</div>';
@@ -532,7 +701,7 @@ function theme_mailarchive_view_message_header($mailarchive, $message) {
   $headers .= "</div>\n<div class=\"message-header subject\">";
   $headers .= t('Subject: !subject', array('!subject' => l($message->subject, "mailarchive/$mailarchive/$message->mid/search/subject")));
   $headers .= "</div>\n<div class=\"message-header date\">";
-  $headers .= t('Date: @date', array('@date' => format_date($message->received, 'short')));
+  $headers .= t('Date: @date', array('@date' => format_date($message->received, 'custom', 'l, F j, Y - g:i a')));
   $headers .= "</div>\n";
   $output .= $headers;
   $output .= "</div><br/>\n";
@@ -614,9 +783,8 @@ function theme_mailarchive_view_message_thread_messages($mailarchive, $message) 
     $items = array();
     while ($current = db_fetch_object($result)) {
       $i++;
-      $from = $current->name ? $current->name : $current->mailbox;
       $subject = $current->mid == $message->mid ? $current->subject : l($current->subject, "mailarchive/$subscription->urlname/$current->year/$current->month/$current->day/$current->mid");
-      $items[] = $subject .' by '. l($from, "mailarchive/$subscription->urlname/$current->mid/search/from-name") .' on '. format_date($current->received, 'custom', 'M j, g:i a Y');
+      $items[] = $subject .' by '. l($message->mailfrom, "mailarchive/$subscription->urlname/$current->mid/search/from-name") .' on '. format_date($current->received, 'custom', 'M j, g:i a Y');
     }
     if ($i > 1) {
       $output .= '<b>'. t('Possibly related messages:') .'</b>';
@@ -680,13 +848,7 @@ function mailarchive_view_search_subject($sid, $mid) {
   // Build list of all messages.
   $items = array();
   while ($message = db_fetch_object($result)) {
-    if ($message->name) {
-      $from = $message->name;
-    }
-    else {
-      $from = $message->mailbox;
-    }
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). ' by '. l($from, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). ' by '. l($message->mailfrom, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
   }
   $output = '<div class="mailarchive"><div class="search-subject">';
   $output .= theme('item_list', $items);
@@ -706,16 +868,10 @@ function mailarchive_view_search_from_name($sid, $mid) {
   drupal_set_title(t('Messages in %subscription from: %name', array('%subscription' => $subscription->urlname, '%name' => $name))); 
   _mailarchive_view_set_breadcrumb($sid, $mid);
   // Display list of messages by name.
-  $result = pager_query("SELECT m.subject, m.received, m.year, m.month, m.day, a.mid, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE name = '". addslashes($name) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC", 25);
+  $result = pager_query("SELECT subject, received, year, month, day, mid, mailfrom FROM mailarchive_messages WHERE mailfrom = '". addslashes($name) ."' AND sid = $sid ORDER BY received DESC", 25);
   $items = array();
   while ($message = db_fetch_object($result)) {
-    if ($message->name) {
-      $from = $message->name;
-    }
-    else {
-      $from = $message->mailbox;
-    }
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $message->mailfrom on ". format_date($message->received, 'custom', 'M j, g:i a Y');
   }
   $output = '<div class="mailarchive"><div class="search-subject">';
   $output .= theme('item_list', $items);
@@ -734,7 +890,7 @@ function mailarchive_view_search_from_address($sid, $mid) {
   $from = db_fetch_object(db_query("SELECT mailbox, address FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'from' AND sid = %d", $mid, $sid));
   drupal_set_title(t('Messages in %subscription from: %address (domain blocked)', array('%subscription' => $subscription->urlname, '%address' => $from->mailbox .'@...'))); 
   _mailarchive_view_set_breadcrumb($sid, $mid);
-  // Display list of messages by name.
+  // list of messages by from address.
   $sql = "SELECT m.mid, m.subject, m.received, m.year, m.month, m.day, a.name, a.mailbox FROM {mailarchive_messages_addresses} a JOIN {mailarchive_messages} m ON a.mid = m.mid WHERE address = '". addslashes($from->address) ."' AND address_type = 'from' AND m.sid = $sid ORDER BY m.received DESC";
   $result = pager_query($sql, 25);
   $items = array();
