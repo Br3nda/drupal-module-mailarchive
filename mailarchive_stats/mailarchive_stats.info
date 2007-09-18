@@ -1,0 +1,5 @@
+; $Id: mailarchive_stats.info,v 1.1 2007/09/18 21:00:52 jeremy Exp $
+name = Mail Archive Statistics
+description = Collect statistics for when messages within mail archives are accessed.
+dependencies = mailarchive
+package = Mail Archive

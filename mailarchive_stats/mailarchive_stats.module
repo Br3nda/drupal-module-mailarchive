@@ -1,0 +1,44 @@
+<?php
+
+/**
+ * @file
+ * Counts how often mail archive messages are viewed.
+ * Copyright (c) 2007.
+ *   Jeremy Andrews <jeremy@kerneltrap.org>.  All rights reserved.
+ */
+
+function mailarchive_stats_exit() {
+  // We only care about mailarchive pages.
+  if (arg(0) == 'mailarchive') {
+    // We only count when viewing a message.
+    if (is_numeric(arg(2)) && is_numeric(arg(3)) && is_numeric(arg(4)) &&
+        is_numeric(arg(5))) {
+      // If a real view, the $sid is already cached in a static so this costs
+      // nothing in the typical case.
+      if ($sid = _mailarchive_sid(arg(1))) {
+        // We don't need to validate that $mid exists in $sid, as this is done
+        // by the mailarchive_view module.  If $mid is not valid for $sid we
+        // would have hit a drupal_goto() before we got to this _exit() code.
+        $mid = arg(5);
+        // Calculate once, as we may use this data multiple times below.
+        $now = time();
+        $date = date('YmdH', $now);
+        db_query('UPDATE {mailarchive_statistics} SET count = count + 1 WHERE date = %d AND mid = %d AND sid = %d', $date, $mid, $sid);
+        if (!db_affected_rows()) {
+          $year = date('Y', $now);
+          $month = date('n', $now);
+          $day = date('j', $now);
+          // Column doesn't exist, so we add it.
+          db_query('INSERT INTO {mailarchive_statistics} (mid, date, count, sid, year, month, day) VALUES(%d, %d, 1, %d, %d, %d, %d)', $mid, $date, $sid, $year, $month, $day);
+          if (!db_affected_rows()) {
+            // It seems someone else viewed this message at the same time we
+            // did and created the necessary database row.  We still need to
+            // increment the counter so our view doesn't get lost by this race
+            // condition.
+            db_query('UPDATE {mailarchive_statistics} SET count = count + 1 WHERE date = %d AND mid = %d AND sid = %d', $date, $mid, $sid);
+          }
+        }
+      }
+    }
+  }
+}
