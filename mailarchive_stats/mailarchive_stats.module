@@ -15,12 +15,12 @@
  * the popularity of individual messages or entire mailing lists.
  */
 function mailarchive_stats_exit() {
+  drupal_bootstrap(DRUPAL_BOOTSTRAP_PATH);
   // We only care about mailarchive pages.
   if (arg(0) == 'mailarchive') {
     // We only count when viewing a message.
     if (is_numeric(arg(2)) && is_numeric(arg(3)) && is_numeric(arg(4)) &&
         is_numeric(arg(5))) {
-      drupal_bootstrap(DRUPAL_BOOTSTRAP_PATH);
       // If a real view, the $sid is already cached in a static so this costs
       // nothing in the typical case.
       if ($sid = _mailarchive_sid(arg(1))) {
