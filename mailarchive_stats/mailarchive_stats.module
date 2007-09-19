@@ -81,6 +81,9 @@ function mailarchive_stats_admin_overview() {
   $lastmonth = date('n', $now - 2678400);
   $day = date('j', $now);
   $yesterday = date('j', $now - 86400);
+  $hour = date('YmdH', $now);
+  $lasthour = date('YmdH', $now - 3600);
+
   $result = db_query('SELECT sid, nid, urlname, subscription_status, message_count, last_message FROM {mailarchive_subscriptions}');
   while ($subscription = db_fetch_object($result)) {
     // All time statistics.
@@ -88,12 +91,12 @@ function mailarchive_stats_admin_overview() {
     $statistics['all'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE count > 0 ORDER BY count DESC')));
 
     // Today's statistics.
-    $statistics[$subscription->sid]['today'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND year = %d AND day = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $year, $day)));
-    $statistics['today'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE year = %d AND day = %d AND count > 0 ORDER BY count DESC', $year, $day)));
+    $statistics[$subscription->sid]['today'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND year = %d AND month = %d AND day = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $year, $month, $day)));
+    $statistics['today'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE year = %d AND month = %d AND day = %d AND count > 0 ORDER BY count DESC', $year, $month, $day)));
 
     // Yesterday's statistics.
-    $statistics[$subscription->sid]['yesterday'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND year = %d AND day = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $year, $yesterday)));
-    $statistics['yesterday'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE year = %d AND day = %d AND count > 0 ORDER BY count DESC', $year, $yesterday)));
+    $statistics[$subscription->sid]['yesterday'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND year = %d AND month = %d AND day = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $year, $month, $yesterday)));
+    $statistics['yesterday'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE year = %d AND month = %d AND day = %d AND count > 0 ORDER BY count DESC', $year, $month, $yesterday)));
 
     // This month's statistics.
     $statistics[$subscription->sid]['month'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND year = %d AND month = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $year, $month)));
@@ -103,14 +106,24 @@ function mailarchive_stats_admin_overview() {
     $statistics[$subscription->sid]['lastmonth'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND year = %d AND month = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $year, $lastmonth)));
     $statistics['lastmonth'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE year = %d AND month = %d AND count > 0 ORDER BY count DESC', $year, $lastmonth)));
 
+    // This hour's statistics.
+    $statistics[$subscription->sid]['hour'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND date = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $hour)));
+    $statistics['hour'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE date = %d AND count > 0 ORDER BY count DESC', $hour)));
+
+    // Last hour's statistics.
+    $statistics[$subscription->sid]['lasthour'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE sid = %d AND date = %d AND count > 0 ORDER BY count DESC', $subscription->sid, $lasthour)));
+    $statistics['lasthour'] = (int)(db_result(db_query('SELECT SUM(count) AS count FROM {mailarchive_statistics} WHERE date = %d AND count > 0 ORDER BY count DESC', $lasthour)));
+
     $statistics[$subscription->sid]['info'] = $subscription;
   }
 
-  $headers = array(t('Mailing list'), t('Today'), t('Yesterday'), t('This month'), t('Last month'), t('All time'));
+  $headers = array(t('Mailing list'), t('This hour'), t('Last hour'), t('Today'), t('Yesterday'), t('This month'), t('Last month'), t('All time'));
   $rows = array();
 
   $rows[] = array(
     array('data' => t('<b>Total</b>')),
+    array('data' => '<b>'. $statistics['hour'] .'</b>'),
+    array('data' => '<b>'. $statistics['lasthour'] .'</b>'),
     array('data' => '<b>'. $statistics['today'] .'</b>'),
     array('data' => '<b>'. $statistics['yesterday'] .'</b>'),
     array('data' => '<b>'. $statistics['month'] .'</b>'),
@@ -121,6 +134,8 @@ function mailarchive_stats_admin_overview() {
     if ($stats['all']) {
       $rows[] = array(
         array('data' => $stats['info']->urlname),
+        array('data' => $stats['hour']),
+        array('data' => $stats['lasthour']),
         array('data' => $stats['today']),
         array('data' => $stats['yesterday']),
         array('data' => $stats['month']),
