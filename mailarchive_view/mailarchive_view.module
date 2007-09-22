@@ -106,13 +106,35 @@ function mailarchive_view_menu($may_cache) {
 /**
  * Drupal nodeapi _view hook. 
  */
-function mailarchive_view(&$node, $teaser = FALSE, $page = FALSE) {
+function mailarchive_view_view(&$node, $teaser = FALSE, $page = FALSE) {
   $node = node_prepare($node, $teaser);
   $node->content['overview'] = array(
     '#value' => mailarchive_view_mailarchive_overview($node->urlname),
     '#weight' => 1,
   );
   return $node;
+}
+
+/**
+ * Drupal _user hook.
+ */
+function mailarchive_view_user($type, $edit, $user) {
+  switch ($type) {
+    case 'form':
+      $form['mailarchive'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Mail archives'),
+        '#weight' => 10,
+      );
+      $form['mailarchive']['mailarchive_quote_nocollapse'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Disable auto-collapse of quoted text'),
+        '#return_value' => 1,
+        '#default_value' => $user->mailarchive_quote_nocollapse,
+        '#description' => t('By default, quoted text in our mail archives is "collapsed" so that you can quickly find the new text in a given mail message.  If you check this box, quoted text will default to being expanded so it is always visible.'),
+      );
+      return $form;
+  }
 }
 
 /**
@@ -219,6 +241,8 @@ function mailarchive_view_display_subscriptions($tid, $depth = 0) {
 
 function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $month = NULL) {
   $sid = _mailarchive_sid($mailarchive);
+  $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
+  $node = node_load($node);
   if ($year == NULL) {
     _mailarchive_view_set_breadcrumb($sid);
     drupal_set_title(t("!list mailing list", array('!list' => $mailarchive)));
@@ -256,7 +280,15 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
     }
   }
   $output = '<div class="mailarchive">';
+  $output .= theme('box', $node->title, $node->body);
+  $output .= '<br />';
   $output .= theme('table', $header, $rows);
+  $additions = module_invoke_all('mailarchive_list_overview', $mailarchive, $year, $month);
+  if (is_array($additions)) {
+    foreach ($additions as $addition) {
+      $output .= $addition;
+    }
+  }
   $output .= '</div>';
   return $output;
 }
@@ -331,7 +363,13 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
   $order = isset($_GET['order']) ? $_GET['order'] : '';
   
   $sql_range = "year = $year AND month = $month AND day = $day";
-  $messages_per_page = ((int)$_GET['messages_per_page'] ? (int)$_GET['messages_per_page'] : 25);
+  $messages_per_page = ((int)$_GET['messages_per_page'] ? (int)$_GET['messages_per_page'] : 50);
+  if ($messages_per_page > 100) {
+    $messages_per_page = 100;
+  }
+  else if ($messages_per_page < 1) {
+    $messages_per_page = 10;
+  }
 
   $output = "<div class=\"mailarchive\"><div class=\"message-list\" id=\"message-list-$mailarchive\">\n";
 
@@ -385,7 +423,14 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
 
   $output .= theme('table', array(t('previous day'), t('today'), t('next day')), array(array(mailarchive_view_day_nav($mailarchive, $year, $month, $day, '<'), mailarchive_view_format_month($month) ." $day, $year", mailarchive_view_day_nav($mailarchive, $year, $month, $day, '>'))));
 
-  $output .= "</div></div></div>\n";
+  $output .= '</div></div>';
+  $additions = module_invoke_all('mailarchive_view_thread', $mailarchive, $year, $month, $day);
+  if (is_array($additions)) {
+    foreach ($additions as $addition) {
+      $output .= $addition;
+    }
+  }
+  $output .= "</div>\n";
   return $output;
 }
 
@@ -728,7 +773,8 @@ function theme_mailarchive_view_message_body($mailarchive, $message) {
   }
   $output .= "</div>\n";
   
-  return $output;
+  //return check_markup($output);
+  return mailarchive_view_lkml(mailarchive_view_quoted($output, '&gt;'));
 }
 
 /**
@@ -992,3 +1038,67 @@ function theme_mailarchive_view_content($node, $teaser=FALSE) {
   $node = node_prepare($node, $teaser);
 }
 
+/**
+ * Auto-collapse quoted text, making it available but non-ubstructive.
+ */
+function mailarchive_view_quoted($text, $quote = '>') {
+  global $user;
+  drupal_add_js('misc/collapse.js');
+  $search = "/(^$quote.*$\n)+/m";
+  $replace = array();
+  preg_match_all($search, $text, $matches);
+  foreach ($matches[0] as $match) {
+    if ($user->mailarchive_quote_nocollapse) {
+      $replace[] = '<fieldset class=" collapsible"><legend>quoted text</legend><div class="content">'. $match .'</div></fieldset>';
+    }
+    else {
+      $replace[] = '<fieldset class=" collapsible collapsed"><legend>quoted text</legend><div class="content">'. $match .'</div></fieldset>';
+    }
+  }
+  foreach ($matches[0] as $key => $value) {
+    $placeholder = "__PLACEHOLDER__{$key}_";
+    $text = preg_replace($search, $placeholder, $text, 1);
+  }
+  foreach ($matches[0] as $key => $value) {
+    $placeholder = "__PLACEHOLDER__{$key}_";
+    $text = preg_replace("/$placeholder/", $replace[$key], $text);
+  }
+  return $text;
+}
+
+
+/**** LKML Specific ****/
+
+// TODO: Move this into an external module called with a hook.  These special filters should be fully
+// configurable on a per-list basis.
+
+/**
+ * Collapse inline patches.
+ * // FIXME: Causes apache to crash on some messages... (memory issues?)
+ */
+function mailarchive_view_patch($text) {
+  drupal_add_js('misc/collapse.js');
+  $search = "&^--- (.)*\n^\+\+\+ (.)*\n^@@ (.)+&sm";
+  //$search = "&^--- [a-zA-Z9-9/\._-]*&m";
+  preg_match($search, $text, $match);
+  $replace = '<fieldset class=" collapsible collapsed"><legend>patch</legend><div class="content">'. $match[0] .'</div></fieldset>';
+  $text = preg_replace($search, $replace, $text);
+  return $text;
+}
+
+/**
+ * Collapse the lkml unsubscribe message.
+ */
+function mailarchive_view_lkml($text, $strip = 0) {
+  drupal_add_js('misc/collapse.js');
+  $search = "&^To unsubscribe from(.)*http://www.tux.org/lkml/&Usm";
+  if ($strip) {
+    $replace = '';
+  }
+  else {
+    preg_match($search, $text, $match);
+    $replace = '<fieldset class=" collapsible collapsed"><legend>unsubscribe notice</legend><div class="content">'. $match[0] .'</div></fieldset>';
+  }
+  $text = preg_replace($search, $replace, $text);
+  return $text;
+}
