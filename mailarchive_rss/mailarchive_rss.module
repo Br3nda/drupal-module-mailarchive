@@ -1,0 +1,115 @@
+<?php
+
+/**
+ * @file
+ * Provides RSS feeds for mail archives.
+ * Copyright (c) 2007.
+ *   Jeremy Andrews <jeremy@kerneltrap.org>.  All rights reserved.
+ */
+
+/**
+ * Implementation of Drupal's hook_menu().
+ */
+function mailarchive_rss_menu($may_cache) {
+  $items = array();
+
+  if (!$may_cache) {
+    if ($sid = _mailarchive_sid(arg(1))) {
+      $mailarchive = arg(1);
+      $items[] = array(
+        'path' => "mailarchive/$mailarchive/feed",
+        'title' => 'RSS feed',
+        'type' => MENU_CALLBACK,
+        'callback' => 'mailarchive_rss_feed',
+        'callback arguments' => array($mailarchive),
+        'access' => user_access('access content'),
+      );
+    }
+  }
+
+  return $items;
+}
+
+/**
+ * Output mailarchive RSS feed.
+ *
+ * Borrowed heavily from node_feed in node.module. This could surely use some
+ * cleanup.
+ */
+function mailarchive_rss_feed($mailarchive) {
+  global $base_url, $locale;
+
+  $sid = _mailarchive_sid($mailarchive);
+  $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
+  $node = node_load($node);
+  // FIXME: Use db_query_range to support non-MySQL databases.
+  //$result = db_query_range(db_query('SELECT subject, body, year, month, day, mid FROM {mailarchive_messages} WHERE sid = %d LIMIT 10', $sid), 0, 10);
+  $result = db_query('SELECT received, subject, body, year, month, day, mid FROM {mailarchive_messages} WHERE sid = %d ORDER BY received DESC LIMIT 25', $sid);
+
+  $namespaces = array('xmlns:dc="http://purl.org/dc/elements/1.1/"');
+
+  $items = '';
+  while ($message = db_fetch_object($result)) {
+    $link = url("mailarchive/$mailarchive/$message->year/$message->month/$message->day/$message->mid", NULL, NULL, 1);
+
+    // From:
+    $from = db_fetch_object(db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'from'", $message->mid));
+    if ($from->name) {
+      $item = "From: $from->name &lt;$from->mailbox@...&gt;<br />\n";
+    }
+    else {
+      $item = "From: &lt;$from->mailbox@...&gt;<br />\n";
+    }
+
+    // Subject:
+    if ($message->subject) {
+      $item .= "Subject: $message->subject<br />\n";
+    }
+
+    // Date:
+    if ($message->received) {
+      $item .= 'Date: '. format_date($message->received, 'custom', 'M j, g:i a Y') ."<br />\n";
+    }
+
+    $item .= "<br />\n";
+
+    if (strlen($message->body) > 2048) {
+      $item .= substr($message->body, 0, 2048) .' ['. l(t('read more'), $link) .']';
+    }
+    else {
+      $item .= $message->body;
+    }
+
+    $items .= format_rss_item($message->subject, $link, $item);
+  }
+
+  $channel = array(
+    'version'     => '2.0',
+    'title'       => variable_get('site_name', 'Drupal') ." - $mailarchive",
+    'link'        => $base_url,
+    'description' => $node->body,
+    'language'    => $locale
+  );
+
+  $output = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+  $output .= "<rss version=\"". $channel["version"] ."\" xml:base=\"". $base_url ."\" ". implode(' ', $namespaces) .">\n";
+  $output .= format_rss_channel($channel['title'], $channel['link'], $channel['description'], $items, $channel['language']);
+  $output .= "</rss>\n";
+
+  drupal_set_header('Content-Type: application/rss+xml; charset=utf-8');
+  print $output;
+}
+
+/**
+ * Implementation of mailarchive_list_overview() hook.
+ */
+function mailarchive_rss_mailarchive_list_overview($mailarchive, $year, $month, $day = NULL) {
+  $url = url("mailarchive/$mailarchive/feed", NULL, NULL, TRUE);
+  drupal_add_feed($url, "$mailarchive RSS");
+  $output .= '<br />'. theme('feed_icon', $url);
+  return $output;
+}
+
+function mailarchive_rss_mailarchive_view_thread($mailarchive, $year, $month, $day) {
+  return mailarchive_rss_mailarchive_list_overview($mailarchive, $year, $month, $day);
+}
