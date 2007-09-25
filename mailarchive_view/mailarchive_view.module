@@ -98,6 +98,20 @@ function mailarchive_view_menu($may_cache) {
         }
       }
     }
+    $message_id = arg(2);
+    if ($sid = _mailarchive_sid(arg(3))) {
+      $mailarchive = arg(3);
+    }
+    else {
+      $mailarchive = '';
+    }
+    $items[] = array(
+      'path' => "mailarchive/message-id/$message_id",
+      'type' => MENU_CALLBACK,
+      'title' => t('Message by message-id'),
+      'access' => user_access('access mailing list archives'),
+      'callback' => 'mailarchive_view_by_messageid',
+      'callback arguments' => array($message_id, $mailarchive));
   }
 
   return $items;
@@ -283,7 +297,7 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
   $output .= theme('box', $node->title, $node->body);
   $output .= '<br />';
   $output .= theme('table', $header, $rows);
-  $additions = module_invoke_all('mailarchive_list_overview', $mailarchive, $year, $month);
+  $additions = module_invoke_all('mailarchive_api', 'list overview', $mailarchive, $year, $month);
   if (is_array($additions)) {
     foreach ($additions as $addition) {
       $output .= $addition;
@@ -398,7 +412,7 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
     // Subject row:
     if ($message->subject) {
       if (strlen($message->subject) > 62) {
-        $message->subject = substr(htmlspecialchars($message->subject), 0, 60) .'...';
+        $message->subject = substr(htmlspecialchars($message->subject, ENT_NOQUOTES), 0, 60) .'...';
       }
     }
     else {
@@ -424,7 +438,7 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
   $output .= theme('table', array(t('previous day'), t('today'), t('next day')), array(array(mailarchive_view_day_nav($mailarchive, $year, $month, $day, '<'), mailarchive_view_format_month($month) ." $day, $year", mailarchive_view_day_nav($mailarchive, $year, $month, $day, '>'))));
 
   $output .= '</div></div>';
-  $additions = module_invoke_all('mailarchive_view_thread', $mailarchive, $year, $month, $day);
+  $additions = module_invoke_all('mailarchive_api', 'view thread', $mailarchive, $year, $month, $day);
   if (is_array($additions)) {
     foreach ($additions as $addition) {
       $output .= $addition;
@@ -690,9 +704,8 @@ function mailarchive_view_message_author($mailarchive, $message, $op) {
  */
 function theme_mailarchive_view_message ($mailarchive, $messageid) {
   $sid = _mailarchive_sid($mailarchive);
-  // TODO: Optimize -- this is a performance killer.
   $message = db_fetch_object(db_query("SELECT m.mid, m.sid, m.received, m.year, m.month, m.day, m.subject, m.mailfrom, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE m.mid = '%d' AND m.sid = %d AND a.address_type = 'from'", $messageid, $sid));
-  drupal_set_title($message->subject);
+  drupal_set_title(htmlspecialchars($message->subject, ENT_NOQUOTES));
 
   if (!empty($message)) {
     $output .= '<div class="mailarchive"><div class="message-thread">';
@@ -701,9 +714,6 @@ function theme_mailarchive_view_message ($mailarchive, $messageid) {
     $output .= theme('mailarchive_view_message_body', $mailarchive, $message);
     $output .= theme('mailarchive_view_message_nav', $mailarchive, $message);
     $output .= theme('mailarchive_view_message_thread_messages', $mailarchive, $message);
-
-    // TODO: This query has awful performance, fix it then re-enable.
-    //$output .= theme('mailarchive_message_footer', $mailarchive, $message);
     $output .= '</div>';
     $output .= "</div></div>\n";
   }
@@ -712,6 +722,40 @@ function theme_mailarchive_view_message ($mailarchive, $messageid) {
   }
  
   return $output;
+}
+
+function mailarchive_view_by_messageid($message_id, $mailarchive = NULL) {
+  if ($mailarchive) {
+    if ($sid = _mailarchive_sid($mailarchive)) {
+      $result = db_query("SELECT sid, year, month, day, mid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $sid);
+    }
+  }
+  else {
+    $result = db_query("SELECT sid, year, month, day, mid, subject, mailfrom, received FROM {mailarchive_messages} WHERE message_id = '%s'", $message_id);
+  }
+
+  $num = db_num_rows($result);
+  if ($num == 1) {
+    $message = db_fetch_object($result);
+    $subscription = _mailarchive_subscription_load($message->sid);
+    drupal_goto("mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid");
+  }
+  else if ($num > 1) {
+    drupal_set_title('Multiple messages with requested message-id found.');
+    $output = '<p>'. t('Select your message from the list below.') .'</p>';
+    while ($message = db_fetch_object($result)) {
+      $subscription = _mailarchive_subscription_load($message->sid);
+      $items[] = t('!list: !subject by %from on %date', array('!list' => l($subscription->urlname, "mailarchive/$subscription->urlname"), '!subject' => l(htmlspecialchars($message->subject, ENT_NOQUOTES), "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"), '%from' => $message->mailfrom, '%date' => format_date($message->received, 'custom', 'l, F j, Y - g:i a')));
+    }
+    $output .= theme('item_list', $items);
+    return $output;
+  }
+  else {
+    drupal_set_title('Requested message-id not found.');
+    $output = '<p>'. t('The message-id %id was not found in our mail archives.  If you recently sent this message to a mailing list that we archive, please check again later.  We synchronize our lists every few minutes, but some messages take longer than others to arrive at our mail servers.', array('%id' => check_plain($message_id))) .'</p>';
+    $output .= '<p>'. t('You can browse our mailing lists !url.', array('!url' => l(t('here'), 'mailarchive'))) .'</p>';
+    return $output;
+  }
 }
 
 /**
@@ -744,7 +788,7 @@ function theme_mailarchive_view_message_header($mailarchive, $message) {
     $headers .= t('Cc: '. implode(', ', $ccs) .'<br/>');
   }
   $headers .= "</div>\n<div class=\"message-header subject\">";
-  $headers .= t('Subject: !subject', array('!subject' => l($message->subject, "mailarchive/$mailarchive/$message->mid/search/subject")));
+  $headers .= t('Subject: !subject', array('!subject' => l(htmlspecialchars($message->subject, ENT_NOQUOTES), "mailarchive/$mailarchive/$message->mid/search/subject")));
   $headers .= "</div>\n<div class=\"message-header date\">";
   $headers .= t('Date: @date', array('@date' => format_date($message->received, 'custom', 'l, F j, Y - g:i a')));
   $headers .= "</div>\n";
@@ -765,7 +809,7 @@ function theme_mailarchive_view_message_body($mailarchive, $message) {
   if ($message->body) {
     // TODO: set this up with CSS
     $output .= '<pre>';
-    $output .= htmlentities($message->body);
+    $output .= check_markup($message->body, variable_get('mailarchive_filter_format', FILTER_FORMAT_DEFAULT), FALSE);
     $output .= '</pre>';
   }
   else {
@@ -773,7 +817,6 @@ function theme_mailarchive_view_message_body($mailarchive, $message) {
   }
   $output .= "</div>\n";
   
-  //return check_markup($output);
   return mailarchive_view_lkml(mailarchive_view_quoted($output, '&gt;'));
 }
 
@@ -802,7 +845,7 @@ function theme_mailarchive_view_message_thread_messages($mailarchive, $message) 
     $output .= '<div class="message-list-thread-line" style="margin-left: '. ($message_depth * 15) .'px;">';
 
     // Truncate fields as necessary.
-    $subject = (strlen($thread->subject) > 62) ? substr(htmlspecialchars($thread->subject), 0, 60) .'...' : htmlspecialchars($thread->subject);
+    $subject = (strlen($thread->subject) > 62) ? substr(htmlspecialchars($thread->subject, ENT_NOQUOTES), 0, 60) .'...' : htmlspecialchars($thread->subject, ENT_NOQUOTES);
     $from = (strlen($thread->name) > 24) ? substr(htmlspecialchars($thread->name), 0, 60) .'...' : htmlspecialchars($thread->name);
 
     // If we are viewing this message, don't link it.
@@ -810,7 +853,7 @@ function theme_mailarchive_view_message_thread_messages($mailarchive, $message) 
       $output .= "<span class=\"message-list-thread-subject\">$subject</span>";
     } 
     else {
-      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/$thread->year/$thread->month/$thread->day/$thread->mid", array('title' => $thread->subject)) .'</span>';
+      $output .= '<span class="message-list-thread-subject">'. l($subject, "mailarchive/$mailarchive/$thread->year/$thread->month/$thread->day/$thread->mid", array('title' => htmlspecialchars($thread->subject, ENT_NOQUOTES))) .'</span>';
     }
     $output .= "<span class=\"message-list-thread-from\">, $from</span>";
     $output .= '<span class="message-list-thread-date">, ('. format_date($thread->received, 'custom', 'D M j, g:i a') .")</span>";
@@ -862,14 +905,14 @@ function theme_mailarchive_view_message_footer($mailarchive, $message) {
   // TODO: Replace table with CSS.
   $output .= "<div align='center'><table border=0><tr><td width=150 align='right'>";
   if($prev->mid) {
-    $output .= l('< Previous Thread', "mailarchive/$mailarchive/$prev->mid", array('title' => $prev->subject));
+    $output .= l('< Previous Thread', "mailarchive/$mailarchive/$prev->mid", array('title' => htmlspecialchars($prev->subject, ENT_NOQUOTES)));
   } 
   else {
     $output .= "< Previous Thread";	
   }
   $output .= "</td><td width=40></td><td width=150 align='left'>";
   if($next->mid) {
-    $output .= l('Next Thread >',"mailarchive/$mailarchive/$next->mid", array('title' => $next->subject));
+    $output .= l('Next Thread >',"mailarchive/$mailarchive/$next->mid", array('title' => htmlspecialchars($next->subject, ENT_NOQUOTES)));
   } 
   else {
     $output .= "Next Thread >";
@@ -894,12 +937,19 @@ function mailarchive_view_search_subject($sid, $mid) {
   // Build list of all messages.
   $items = array();
   while ($message = db_fetch_object($result)) {
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). ' by '. l($message->mailfrom, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l(htmlspecialchars($message->subject, ENT_NOQUOTES), "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). ' by '. l($message->mailfrom, "mailarchive/$subscription->urlname/$message->mid/search/from-name") .' on '. format_date($message->received, 'custom', 'M j, g:i a Y');
   }
   $output = '<div class="mailarchive"><div class="search-subject">';
   $output .= theme('item_list', $items);
   $output .= theme('pager', 25);
-  $output .= "</div></div>\n";
+  $additions = module_invoke_all('mailarchive_api', 'search subject', $subscription->urlname, $mid);
+  $output .= '</div>';
+  if (is_array($additions)) {
+    foreach ($additions as $addition) {
+      $output .= $addition;
+    }
+  }
+  $output .= "</div>\n";
   return $output;
 }
 
@@ -917,12 +967,20 @@ function mailarchive_view_search_from_name($sid, $mid) {
   $result = pager_query("SELECT subject, received, year, month, day, mid, mailfrom FROM mailarchive_messages WHERE mailfrom = '". addslashes($name) ."' AND sid = $sid ORDER BY received DESC", 25);
   $items = array();
   while ($message = db_fetch_object($result)) {
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $message->mailfrom on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l(htmlspecialchars($message->subject, ENT_NOQUOTES), "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $message->mailfrom on ". format_date($message->received, 'custom', 'M j, g:i a Y');
   }
-  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output = '<div class="mailarchive"><div class="search-from-name">';
   $output .= theme('item_list', $items);
   $output .= theme('pager', 25);
-  $output .= "</div></div>\n";
+  $output .= '</div>';
+  $subscription = _mailarchive_subscription_load($sid);
+  $additions = module_invoke_all('mailarchive_api', 'search from name', $subscription->urlname, $mid);
+  if (is_array($additions)) {
+    foreach ($additions as $addition) {
+      $output .= $addition;
+    }
+  }
+  $output .= "</div>\n";
   return $output;
 }
 
@@ -947,12 +1005,19 @@ function mailarchive_view_search_from_address($sid, $mid) {
     else {
       $from = $message->mailbox;
     }
-    $items[] = l($message->subject, "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
+    $items[] = l(htmlspecialchars($message->subject, ENT_NOQUOTES), "mailarchive/$subscription->urlname/$message->year/$message->month/$message->day/$message->mid"). " by $from on ". format_date($message->received, 'custom', 'M j, g:i a Y');
   }
-  $output = '<div class="mailarchive"><div class="search-subject">';
+  $output = '<div class="mailarchive"><div class="search-from-address">';
   $output .= theme('item_list', $items);
   $output .= theme('pager', 25);
-  $output .= "</div></div>\n";
+  $output .= '</div>';
+  $additions = module_invoke_all('mailarchive_api', 'search from address', $subscription->urlname, $mid);
+  if (is_array($additions)) {
+    foreach ($additions as $addition) {
+      $output .= $addition;
+    }
+  }
+  $output .= "</div>\n";
   return $output;
 }
 
@@ -1018,7 +1083,7 @@ function _mailarchive_view_search_subjects($sid, $subjects, $limit = 10) {
     }
   }
   $filter .= ')';
-  return pager_query("SELECT mid, subject, received, year, month, day, mailfrom FROM {mailarchive_messages} WHERE sid = $sid $filter ORDER BY received DESC", $limit);
+  return pager_query("SELECT mid, subject, body, received, year, month, day, mailfrom FROM {mailarchive_messages} WHERE sid = $sid $filter ORDER BY received DESC", $limit);
 }
 
 // TODO: This function is unused.
