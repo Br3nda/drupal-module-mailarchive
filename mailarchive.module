@@ -92,6 +92,8 @@ function mailarchive_admin_settings() {
     '#description' => t('Specify how many messages should be downloaded at a time.  This number needs to be kept low enough that your browser doesn\'t timeout while messages are being downloaded.')
   );
 
+  $form['general']['mailarchive_filter_format'] = filter_form(variable_get('mailarchive_filter_format', FILTER_FORMAT_DEFAULT));
+
   $form['attachments'] = array('#type' => 'fieldset',
     '#title' => t('Attachment settings'),
     '#collapsible' => TRUE,
@@ -141,6 +143,7 @@ function mailarchive_admin_settings_submit($form_id, &$form) {
   variable_set('mailarchive_download_limit', $form['mailarchive_download_limit']);
   variable_set('mailarchive_save_attachments', $form['mailarchive_save_attachments']);
   variable_set('mailarchive_attachments_path', $form['mailarchive_attachments_path']);
+  variable_set('mailarchive_filter_format', $form['format']);
   drupal_set_message('Mailing list archive settings saved.');
 }
 
@@ -510,6 +513,10 @@ function mailarchive_form_alter($form_id, &$form) {
     else {
       unset($form['nodes']['mailarchive']);
     }
+  }
+  else if ($form_id == 'mailarchive_admin_settings') {
+    $form['general']['mailarchive_filter_format']['#title'] = t('Message body format');
+    $form['general']['mailarchive_filter_format']['#description'] = t('Select which format filter you wish to apply when displaying mail archive message bodies.');
   }
 }
 
