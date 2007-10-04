@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.9 2007/09/11 18:12:57 jeremy Exp $
+// $Id: mailarchive.install,v 1.10 2007/10/04 00:56:14 jeremy Exp $
 
 /**
  * Mailarchive module database schema.
@@ -41,7 +41,7 @@ function mailarchive_install() {
         received int(11) UNSIGNED NOT NULL DEFAULT '0',
         year int(4) UNSIGNED NOT NULL DEFAULT '0',
         month int(2) UNSIGNED NOT NULL DEFAULT '0',
-        day day(2) UNSIGNED NOT NULL DEFAULT '0',
+        day int(2) UNSIGNED NOT NULL DEFAULT '0',
         headers text NOT NULL DEFAULT '',
         message_id varchar(255) NOT NULL DEFAULT '',
         reference varchar(255) NOT NULL DEFAULT '',
