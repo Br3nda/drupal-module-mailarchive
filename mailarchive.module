@@ -1229,10 +1229,13 @@ function _mailarchive_get_message_body($stream, $message, $structure, $part = 1)
     switch ($structure->encoding) {
       case 3: // base64
         $decoded = drupal_convert_to_utf8(imap_base64($body), $encoding);
+        break;
       case 4: // quoted-printable
         $decoded = drupal_convert_to_utf8(quoted_printable_decode($body), $encoding);
+        break;
       default:
         $decoded = drupal_convert_to_utf8($body, $encoding);
+        break;
     }
 
     if ($decoded) {
