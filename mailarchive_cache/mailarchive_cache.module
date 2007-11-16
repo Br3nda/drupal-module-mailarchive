@@ -1,0 +1,114 @@
+<?php
+
+/**
+ * @file
+ * Counts how often mail archive messages are viewed.
+ * Copyright (c) 2007.
+ *   Jeremy Andrews <jeremy@kerneltrap.org>.  All rights reserved.
+ */
+
+define('MAILARCHIVE_CACHE_CLEAN', 0);
+define('MAILARCHIVE_CACHE_DIRTY', 1);
+
+/**
+ * Insert page into list overview cache.
+ */
+function mailarchive_cache_add_overview($cid, $data, $sid, $year, $month, $day) {
+  db_query("UPDATE {cache_mailarchive_overview} SET data = '%s', dirty = %d, timestamp = %d WHERE cid = '%s' AND sid = %d", $data, MAILARCHIVE_CACHE_CLEAN, time(), $cid, $sid);
+  if (!db_affected_rows()) {
+    db_query("INSERT INTO {cache_mailarchive_overview} (data, dirty, timestamp, cid, sid, year, month, day) VALUES('%s', %d, %d, '%s', %d, %d, %d, %d)", $data, MAILARCHIVE_CACHE_CLEAN, time(), $cid, $sid, $year, $month, $day);
+  }
+}
+
+/**
+ * Insert page into message view cache.
+ */
+function mailarchive_cache_add_message($cid, $data, $sid, $message) {
+  db_query("UPDATE {cache_mailarchive_message} SET data = '%s', dirty = %d, timestamp = %d WHERE cid = '%s' AND sid = %d", $data, MAILARCHIVE_CACHE_CLEAN, time(), $cid, $sid);
+  if (!db_affected_rows()) {
+    db_query("INSERT INTO {cache_mailarchive_message} (data, dirty, timestamp, cid, sid, mid, thread_id, year, month, day) VALUES('%s', %d, %d, '%s', %d, %d, %d, %d, %d, %d)", $data, MAILARCHIVE_CACHE_CLEAN, time(), $cid, $sid, $message->mid, $message->thread_id, $message->year, $message->month, $message->day);
+  }
+}
+
+/**
+ * Retrieve page from list overview cache.
+ */
+function mailarchive_cache_get_overview($cid, $force = FALSE) {
+  $cache = db_fetch_object(db_query("SELECT data, dirty FROM {cache_mailarchive_overview} WHERE cid = '%s'", $cid));
+  if (is_object($cache) && $cache->data) {
+    $rand = mt_rand(0, variable_get('mailarchive_cache_probability', 3));
+    if ($force !== TRUE && $cache->dirty && !$rand) {
+      // If a given cache page is dirty, we don't want 100% of the hits to that
+      // page to try and rebuild it at the same time.  Instead, we utilize
+      // mt_rand so this only happens 1 in N times, where by default N is 3.
+      return NULL;
+    }
+    return $cache->data;
+  }
+  else {
+    return NULL;
+  }
+}
+
+/**
+ * Retrieve page from message cache.
+ */
+function mailarchive_cache_get_message($cid, $force = FALSE) {
+  $cache = db_fetch_object(db_query("SELECT data, dirty FROM {cache_mailarchive_message} WHERE cid = '%s'", $cid));
+  if (is_object($cache) && $cache->data) {
+    $rand = mt_rand(0, variable_get('mailarchive_cache_probability', 3));
+    if ($force !== TRUE && $cache->dirty && !$rand) {
+      // If a given cache page is dirty, we don't want 100% of the hits to that
+      // page to try and rebuild it at the same time.  Instead, we utilize
+      // mt_rand so this only happens 1 in N+1 times, where by default N is 3.
+      // In other words, the rebuild will only happen 25% of the times the dirty
+      // page is viewed.
+      return NULL;
+    }
+    return $cache->data;
+  }
+  else {
+    return NULL;
+  }
+}
+
+/**
+ * Mark cache entries as dirty.
+ */
+function mailarchive_cache_dirty($keys = array()) {
+  // Mark dirty by cid
+  if ($keys['cid']) {
+    db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE cid = '%s'", MAILARCHIVE_CACHE_DIRTY, time(), $keys['cid']);
+    db_query("UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE cid = '%s'", MAILARCHIVE_CACHE_DIRTY, time(), $keys['cid']);
+  }
+
+  // Mark dirty by thread_id
+  if ($keys['thread_id']) {
+    if ($keys['sid']) {
+      db_query('UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE sid = %d AND thread_id = %d', MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['thread_id']);
+    }
+  }
+
+  // Mark dirty by mid
+  if ($keys['mid']) {
+    if ($keys['sid']) {
+      db_query('UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE sid = %d AND mid = %d', MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['mid']);
+    }
+  }
+
+  // Mark dirty by date
+  if ($keys['year']) {
+    if ($keys['month']) {
+      if ($keys['day']) {
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND month = %d AND (day = %d OR day = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month'], $keys['day']);
+      }
+      else {
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND (month = %d OR month = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month']);
+      }
+    }
+    else {
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND (year = %d OR year = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year']);
+    }
+  }
+}
+

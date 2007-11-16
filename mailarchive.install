@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.10 2007/10/04 00:56:14 jeremy Exp $
+// $Id: mailarchive.install,v 1.11 2007/11/16 02:36:36 jeremy Exp $
 
 /**
  * Mailarchive module database schema.
@@ -37,6 +37,7 @@ function mailarchive_install() {
       db_query("CREATE TABLE {mailarchive_messages} (
         mid int(11) UNSIGNED AUTO_INCREMENT,
         sid int(11) UNSIGNED NOT NULL DEFAULT '0',
+        status int(2) UNSIGNED NOT NULL DEFAULT '0',
         created int(11) UNSIGNED NOT NULL DEFAULT '0',
         received int(11) UNSIGNED NOT NULL DEFAULT '0',
         year int(4) UNSIGNED NOT NULL DEFAULT '0',
@@ -56,6 +57,7 @@ function mailarchive_install() {
         attachments_path varchar(255) NOT NULL DEFAULT '',
         PRIMARY KEY (mid),
         UNIQUE (sid, message_id),
+        KEY (status),
         KEY (created),
         KEY (received),
         KEY (year),
@@ -181,5 +183,16 @@ function mailarchive_update_4() {
   while ($message = db_fetch_object($result)) {
     db_query("UPDATE {mailarchive_messages} SET mailfrom = '%s' WHERE mid = %d", $message->name ? $message->name : $message->mailbox, $message->mid);
   }
+  return $ret;
+}
+
+/**
+ * Add a status field to allow messages to be unpublished, i.e. due to spam.
+ */
+function mailarchive_update_5() {
+  $ret = array();
+  set_time_limit(0);
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD status int(2) UNSIGNED NOT NULL DEFAULT '0' AFTER mid");
+  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (status)");
   return $ret;
 }

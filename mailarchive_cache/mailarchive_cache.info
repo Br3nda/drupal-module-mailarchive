@@ -1,0 +1,5 @@
+; $Id: mailarchive_cache.info,v 1.1 2007/11/16 02:36:36 jeremy Exp $
+name = Mail Archive Cache
+description = Provides a caching mechanism to improve mail archive performance.
+dependencies = mailarchive
+package = Mail Archive

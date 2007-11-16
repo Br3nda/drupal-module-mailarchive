@@ -1,4 +1,4 @@
-; $Id: mailarchive.info,v 1.4 2007/09/14 19:17:08 jeremy Exp $
+; $Id: mailarchive.info,v 1.5 2007/11/16 02:36:36 jeremy Exp $
 name = Mail Archive
 description = Online mailing list archives.
 dependencies = taxonomy

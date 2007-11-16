@@ -16,6 +16,9 @@ define('MAILARCHIVE_PROTOCOL_IMAP', 2);
 define('MAILARCHIVE_PROTOCOL_IMAPS', 3);
 define('MAILARCHIVE_PROTOCOL_FILE', 4);
 
+define('MAILARCHIVE_MESSAGE_PUBLISHED', 0);
+define('MAILARCHIVE_MESSAGE_UNPUBLISHED', 1);
+
 /**
  * Drupal _help hook.  Provides help and informational text about the
  * mailarchive module.
@@ -627,7 +630,7 @@ function mailarchive_admin_update() {
   $sid = (int)db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $urlname));
   if ($sid) {
     $count = db_result(db_query('SELECT COUNT(*) FROM {mailarchive_messages} WHERE sid = %d', $sid));
-    $last = db_result(db_query('SELECT MAX(received) FROM {mailarchive_messages} WHERE sid = %d', $sid));
+    $last = db_result(db_query('SELECT MAX(received) FROM {mailarchive_messages} WHERE sid = %d AND received < %d', $sid, time()));
     db_query('UPDATE {mailarchive_subscriptions} SET message_count = %d, last_message = %d WHERE sid = %d', $count, $last, $sid);
     drupal_set_message(t('Mailing list %list updated.', array('%list' => $urlname)));
   }
@@ -964,6 +967,9 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
   // Save the new message.
   db_query("INSERT INTO {mailarchive_messages} (sid, created, received, year, month, day, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, mailfrom, subject, body, attachments) VALUES (%d, %d, %d, %d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', '%s', %d)", $subscription->sid, time(), $header->udate, $year, $month, $day, serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, $mailfrom, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
   $mid = db_result(db_query("SELECT mid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
+  if (module_exists('mailarchive_cache')) {
+    mailarchive_cache_dirty(array('sid' => $subscription->sid, 'mid' => $mid, 'thread_id' => $thread_id, 'year' => $year, 'month' => $month, 'day' => $day));
+  }
 
   // If enabled, download any attachments.
   if (variable_get('mailarchive_save_attachments', 0)) {
@@ -1036,10 +1042,13 @@ function _mailarchive_rethread($sid, $thread_id) {
     if ($child->multiple_in_reply_to) {
       $in_reply_to = explode(',', $child->in_reply_to);
       foreach ($in_reply_to as $i) {
-        $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d', $sid, $i));
+        $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, year, month, day FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d', $sid, $i));
         if ($parent->thread_id) {
           // We've located the valid in_reply_to.
           db_query("UPDATE {mailarchive_messages} SET in_reply_to = '%s', multiple_in_reply_to = 0 WHERE sid = %d AND mid = %d", $i, $sid, $parent->mid);
+          if (module_exists('mailarchive_cache')) {
+            mailarchive_cache_dirty(array('sid' => $sid, 'mid' => $parent->mid, 'thread_id' => $parent->thread_id, 'year' => $parent->year, 'month' => $parent->month, 'day' => $parent->day));
+          }
           break;
         }
       }
@@ -1091,6 +1100,9 @@ function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $pare
   }
 
   db_query('UPDATE {mailarchive_messages} SET thread_id = %d, sub_thread_id = "%s/" WHERE sid = %d AND message_id = "%s"', $thread_id, $sub_thread_id, $sid, $parent->message_id);
+  if (module_exists('mailarchive_cache')) {
+    mailarchive_cache_dirty(array('sid' => $sid, 'mid' => $parent->mid, 'thread_id' => $thread_id, 'year' => $parent->year, 'month' => $parent->month, 'day' => $parent->day));
+  }
 
   // Find all children of the current parent.
   $result = db_query("SELECT mid, message_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%')", $sid, $parent->message_id, $parent->message_id);
@@ -1185,6 +1197,9 @@ function _mailarchive_extract_attachments($subscription, $mid, $stream, $message
     db_query("INSERT INTO {mailarchive_messages_attachments} (sid, mid, name, bytes, part) VALUES(%d, %d, '%s', %d, %d)", $subscription->sid, $mid, "attachment.$part", $details->bytes, $part);
   }
   db_query("UPDATE {mailarchive_messages} SET attachments = %d, attachments_path = '%s' WHERE sid = %d AND mid = %d", $attachments, $attachments_path, $subscription->sid, $mid);
+  if (module_exists('mailarchive_cache')) {
+    mailarchive_cache_dirty(array('mid' => $mid));
+  }
   return $attachments;
 }
 

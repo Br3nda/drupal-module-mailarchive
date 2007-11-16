@@ -18,7 +18,7 @@ function mailarchive_rss_menu($may_cache) {
       $mailarchive = arg(1);
       if (is_numeric($mid = arg(3))) {
         // Validate that this $mid is really part of the specified $sid.
-        if (db_result(db_query("SELECT sid FROM {mailarchive_messages} WHERE mid = %d and sid = %d", $mid, $sid))) {
+        if (db_result(db_query("SELECT sid FROM {mailarchive_messages} WHERE mid = %d and sid = %d AND status = %d", $mid, $sid, MAILARCHIVE_MESSAGE_PUBLISHED))) {
           $items[] = array(
             'path' => "mailarchive/$mailarchive/feed/$mid/from/name",
             'title' => 'from name RSS feed',
@@ -69,7 +69,7 @@ function mailarchive_rss_menu($may_cache) {
  */
 function mailarchive_rss_feed($mailarchive) {
   $sid = _mailarchive_sid($mailarchive);
-  $result = pager_query("SELECT received, subject, body, year, month, day, mid FROM {mailarchive_messages} WHERE sid = $sid ORDER BY received DESC", 25);
+  $result = pager_query("SELECT received, subject, body, year, month, day, mid FROM {mailarchive_messages} WHERE sid = $sid AND status = ". MAILARCHIVE_MESSAGE_PUBLISHED .' ORDER BY received DESC', 25);
 
   $items = mailarchive_rss_items($mailarchive, $result);
 
@@ -88,8 +88,8 @@ function mailarchive_rss_feed($mailarchive) {
  */
 function mailarchive_rss_feed_fromname($mailarchive, $mid) {
   $sid = _mailarchive_sid($mailarchive);
-  $name = db_result(db_query("SELECT mailfrom FROM {mailarchive_messages} WHERE mid = %d AND sid = %d", $mid, $sid));
-  $result = pager_query("SELECT received, subject, body, year, month, day, mid FROM {mailarchive_messages} WHERE mailfrom = '". addslashes($name) ."' AND sid = $sid ORDER BY received DESC", 25);
+  $name = db_result(db_query("SELECT mailfrom FROM {mailarchive_messages} WHERE mid = %d AND sid = %d AND status = %d", $mid, $sid, MAILARCHIVE_MESSAGE_PUBLISHED));
+  $result = pager_query("SELECT received, subject, body, year, month, day, mid FROM {mailarchive_messages} WHERE mailfrom = '". addslashes($name) ."' AND sid = $sid AND status = ". MAILARCHIVE_MESSAGE_PUBLISHED .' ORDER BY received DESC', 25);
 
   $items = mailarchive_rss_items($mailarchive, $result);
 
@@ -105,8 +105,8 @@ function mailarchive_rss_feed_fromname($mailarchive, $mid) {
  */
 function mailarchive_rss_feed_fromaddress($mailarchive, $mid) {
   $sid = _mailarchive_sid($mailarchive);
-  $from = db_fetch_object(db_query("SELECT mailbox, address FROM {mailarchive_messages} WHERE mid = %d AND address_type = 'from' AND sid = %d", $mid, $sid));
-  $result = pager_query("SELECT m.received, m.subject, m.body, m.year, m.month, m.day, m.mid, m.mailfrom FROM {mailarchive_messages} m JOIN {mailarchive_messages_addresses} a ON a.mid = m.mid WHERE mailfrom = '". addslashes($from->address) ."' AND address_type = 'from' m.sid = $sid ORDER BY m.received DESC", 25);
+  $from = db_fetch_object(db_query("SELECT mailbox, address FROM {mailarchive_messages} WHERE mid = %d AND address_type = 'from' AND sid = %d AND status = %d", $mid, $sid, MAILARCHIVE_MESSAGE_PUBLISHED));
+  $result = pager_query("SELECT m.received, m.subject, m.body, m.year, m.month, m.day, m.mid, m.mailfrom FROM {mailarchive_messages} m JOIN {mailarchive_messages_addresses} a ON a.mid = m.mid WHERE mailfrom = '". addslashes($from->address) ."' AND address_type = 'from' m.sid = $sid AND m.status = ". MAILARCHIVE_MESSAGE_PUBLISHED .' ORDER BY m.received DESC', 25);
 
   $items = mailarchive_rss_items($mailarchive, $result);
 
@@ -234,8 +234,8 @@ function mailarchive_rss_mailarchive_api($op, $mailarchive, $arg1 = NULL, $arg2 
     case 'search subject':
       // Two quick database queries give us a common RSS path no matter which
       // message in a given thread is clicked.  This improves caching.
-      $thread = db_fetch_object(db_query('SELECT sid, subject FROM {mailarchive_messages} WHERE mid = %d', $arg1));
-      $min = db_result(db_query("SELECT MIN(mid) FROM {mailarchive_messages} WHERE sid = %d AND subject = '%s'", $thread->sid, addslashes($thread->subject)));
+      $thread = db_fetch_object(db_query('SELECT sid, subject FROM {mailarchive_messages} WHERE mid = %d AND status = %d', $arg1, MAILARCHIVE_MESSAGE_PUBLISHED));
+      $min = db_result(db_query("SELECT MIN(mid) FROM {mailarchive_messages} WHERE sid = %d AND subject = '%s' AND status = %d", $thread->sid, addslashes($thread->subject), MAILARCHIVE_MESSAGE_PUBLISHED));
       $url = url("mailarchive/$mailarchive/feed/$min/subject", NULL, NULL, TRUE);
       $description = t('%mailarchive subject RSS', array('%mailarchive' => $mailarchive));
       return mailarchive_rss_feed_icon($url, $description);
@@ -243,8 +243,8 @@ function mailarchive_rss_mailarchive_api($op, $mailarchive, $arg1 = NULL, $arg2 
     case 'search from name':
       // Two quick database queries give us a common RSS path no matter which
       // message in a given thread is clicked.  This improves caching.
-      $thread = db_fetch_object(db_query('SELECT sid, mailfrom FROM {mailarchive_messages} WHERE mid = %d', $arg1));
-      $min = db_result(db_query("SELECT MIN(mid) FROM {mailarchive_messages} WHERE sid = %d AND mailfrom = '%s'", $thread->sid, $thread->mailfrom));
+      $thread = db_fetch_object(db_query('SELECT sid, mailfrom FROM {mailarchive_messages} WHERE mid = %d AND status = %d', $arg1, MAILARCHIVE_MESSAGE_PUBLISHED));
+      $min = db_result(db_query("SELECT MIN(mid) FROM {mailarchive_messages} WHERE sid = %d AND mailfrom = '%s' AND status = %d", $thread->sid, $thread->mailfrom, MAILARCHIVE_MESSAGE_PUBLISHED));
       $url = url("mailarchive/$mailarchive/feed/$min/from/name", NULL, NULL, TRUE);
       $description = t('%mailarchive from name RSS', array('%mailarchive' => $mailarchive));
       return mailarchive_rss_feed_icon($url, $description);
