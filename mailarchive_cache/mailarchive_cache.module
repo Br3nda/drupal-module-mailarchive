@@ -34,10 +34,9 @@ function mailarchive_cache_add_message($cid, $data, $sid, $message) {
  * Retrieve page from list overview cache.
  */
 function mailarchive_cache_get_overview($cid, $force = FALSE) {
-  $cache = db_fetch_object(db_query("SELECT data, dirty FROM {cache_mailarchive_overview} WHERE cid = '%s'", $cid));
+  $cache = db_fetch_object(db_query("SELECT data, dirty, timestamp FROM {cache_mailarchive_overview} WHERE cid = '%s'", $cid));
   if (is_object($cache) && $cache->data) {
-    $rand = mt_rand(0, variable_get('mailarchive_cache_probability', 3));
-    if ($force !== TRUE && $cache->dirty && !$rand) {
+    if ($form !== TRUE && mailarchive_rebuild_cache($cache)) {
       // If a given cache page is dirty, we don't want 100% of the hits to that
       // page to try and rebuild it at the same time.  Instead, we utilize
       // mt_rand so this only happens 1 in N times, where by default N is 3.
@@ -54,10 +53,9 @@ function mailarchive_cache_get_overview($cid, $force = FALSE) {
  * Retrieve page from message cache.
  */
 function mailarchive_cache_get_message($cid, $force = FALSE) {
-  $cache = db_fetch_object(db_query("SELECT data, dirty FROM {cache_mailarchive_message} WHERE cid = '%s'", $cid));
+  $cache = db_fetch_object(db_query("SELECT data, dirty, timestamp FROM {cache_mailarchive_message} WHERE cid = '%s'", $cid));
   if (is_object($cache) && $cache->data) {
-    $rand = mt_rand(0, variable_get('mailarchive_cache_probability', 3));
-    if ($force !== TRUE && $cache->dirty && !$rand) {
+    if ($form !== TRUE && mailarchive_rebuild_cache($cache)) {
       // If a given cache page is dirty, we don't want 100% of the hits to that
       // page to try and rebuild it at the same time.  Instead, we utilize
       // mt_rand so this only happens 1 in N+1 times, where by default N is 3.
@@ -100,15 +98,56 @@ function mailarchive_cache_dirty($keys = array()) {
   if ($keys['year']) {
     if ($keys['month']) {
       if ($keys['day']) {
+        // Flush overviews from specified day
         db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND month = %d AND (day = %d OR day = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month'], $keys['day']);
+        // Flush wildcard overviews
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND (year = 0 OR month = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid']);
       }
       else {
+        // Flush overviews from specified month
         db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND (month = %d OR month = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month']);
+        // Flush wildcard overviews
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = 0", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid']);
       }
     }
     else {
+        // Flush overviews from specified year, and wildcards
         db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND (year = %d OR year = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year']);
     }
   }
+}
+
+/**
+ * The longer a page is dirty, the more likely it will be rebuilt.  If a page
+ * has been dirty more than 24 hours it will always be rebuilt.
+ */
+function mailarchive_rebuild_cache($cache) {
+  if ($cache->dirty) {
+    $now = time();
+    if ($now - $cache->timestamp > 86400) {
+      return 1;
+    }
+    else if ($now - $cache->timestamp > 43200) {
+      $rand = mt_rand(0, 1);
+      return $rand;
+    }
+    else if ($now - $cache->timestamp > 21600) {
+      $rand = mt_rand(0, 2);
+      return !$rand;
+    }
+    else if ($now - $cache->timestamp > 10800) {
+      $rand = mt_rand(0, 3);
+      return !$rand;
+    }
+    else if ($now - $cache->timestamp > 5400) {
+      $rand = mt_rand(0, 4);
+      return !$rand;
+    }
+    else {
+      $rand = mt_rand(0, 5);
+      return !$rand;
+    }
+  }
+  return 0;
 }
 
