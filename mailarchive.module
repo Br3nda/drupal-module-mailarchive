@@ -82,7 +82,8 @@ function mailarchive_access($op, $node) {
 function mailarchive_admin_settings() {
   $form = array();
 
-  $form['general'] = array('#type' => 'fieldset',
+  $form['general'] = array( 
+    '#type' => 'fieldset',
     '#title' => t('General settings'),
     '#collapsible' => TRUE,
   );
@@ -112,6 +113,20 @@ function mailarchive_admin_settings() {
     '#title' => t('Attachment subdirectory'),
     '#default_value' => variable_get('mailarchive_attachments_path', 'mailarchive'),
     '#description' => t('If you enable the mailarchive module to save attachments, you need to specify the subdirectory where these attachments should be saved.  The attachment subdirectory requires that your Drupal file system settings are properly configured.  Based on your currently configured file system path, the attachment subdirectory will be created within the <em>%path</em> directory.', array('%path' => file_directory_path()))
+  );
+
+  $form['search'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Search indexing'),
+    '#collapsible' => TRUE,
+  );
+  $number[0] = t('disabled');
+  $form['search']['mailarchive_search_index'] = array(
+    '#type' => 'select',
+    '#title' => t('Messages to index at a time'),
+    '#default_value' => variable_get('mailarchive_search_index', 100),
+    '#options' => $number,
+    '#description' => t('Specify how many mail archive messages should be indexed each time cron is run.'),
   );
 
   $form['save'] = array(
@@ -147,6 +162,7 @@ function mailarchive_admin_settings_submit($form_id, &$form) {
   variable_set('mailarchive_save_attachments', $form['mailarchive_save_attachments']);
   variable_set('mailarchive_attachments_path', $form['mailarchive_attachments_path']);
   variable_set('mailarchive_filter_format', $form['format']);
+  variable_set('mailarchive_search_index', $form['mailarchive_search_index']);
   drupal_set_message('Mailing list archive settings saved.');
 }
 
@@ -520,6 +536,73 @@ function mailarchive_form_alter($form_id, &$form) {
   else if ($form_id == 'mailarchive_admin_settings') {
     $form['general']['mailarchive_filter_format']['#title'] = t('Message body format');
     $form['general']['mailarchive_filter_format']['#description'] = t('Select which format filter you wish to apply when displaying mail archive message bodies.');
+  }
+}
+
+/**
+ * Drupal _search() hook.  Adds a mail archive search tab.
+ */
+function mailarchive_search($op = 'search', $keys = NULL) {
+  switch ($op) {
+    case 'name':
+      return t('Mail archive message');
+
+    case 'reset':
+      variable_del('mailarchive_search_cron_last');
+      return;
+
+    case 'search':
+      $find = do_search($keys, 'mailarchive', 'INNER JOIN {mailarchive_messages} m ON m.mid = i.sid', 'i.type = "mailarchive"');
+      $results = array();
+
+      foreach ($find as $item) {
+        $msg = db_fetch_object(db_query('SELECT m.mid, s.urlname, m.mailfrom, m.subject, m.body, m.created, m.year, m.month, m.day FROM {mailarchive_messages} m INNER JOIN {mailarchive_subscriptions} s ON s.sid = m.sid WHERE mid = %d', $item->sid));
+        $link = 'mailarchive/'.$msg->urlname.'/'.$msg->year.'/'.$msg->month.'/'.$msg->day.'/'.$msg->mid;
+        $format = variable_get('mailarchive_filter_format', FILTER_FORMAT_DEFAULT);
+
+        $results[] = array('link' => url($link),
+                           'type' => 'mailarchive' ,
+                           'title' => $msg->subject,
+                           'date' => $msg->created,
+                           'extra' => array('from' => $msg->mailfrom,
+                                            'list' => $msg->urlname),
+                           'snippet' => search_excerpt($keys, check_markup($msg->body, $format))
+        );
+      }
+      return $results;
+
+    case 'status':
+      // TODO: Optimize, this can be slow.
+      $max = db_result(db_query('SELECT MAX(sid) FROM {search_index} WHERE type = \'mailarchive\' '));
+      $last = variable_get('mailarchive_search_cron_last', 0);
+      return is_null($max) ? 0 : $max - $last; 
+      
+    default:
+      break;
+  }
+}
+
+/**
+ * Drupal _update_index() hook.
+ */
+function mailarchive_update_index() {
+  // limit the number of messages being indexed per cron run
+
+  $limit = variable_get('mailarchive_search_index', 100);
+
+  if ($limit > 0) {
+    $last = (int)variable_get('mailarchive_search_cron_last', 0);
+ 
+    $result = db_query_range('SELECT mid, subject, body FROM {mailarchive_messages} WHERE mid > %d ORDER BY mid ASC', $last, $limit);
+
+    while ($msg = db_fetch_object($result)) {
+      $text = '<h1>'. $msg->subject. '</h1>';
+      $text .= '<h2>'.  $msg->body. '</h2>';
+      search_index($msg->mid, 'mailarchive', $text);
+
+      // update this inside the loop, in case of a time-out
+      variable_set('mailarchive_search_cron_last', $msg->mid);
+    }
   }
 }
 
