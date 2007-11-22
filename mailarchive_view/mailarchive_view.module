@@ -666,7 +666,9 @@ function mailarchive_view_message_thread($mailarchive, $parent, $op) {
     if ($op == '>') {
       if (!isset($header_set['next'])) {
         $next = '<link rel="next" href="'. url($url) .'" />';
-        mailarchive_cache_add_message("$mailarchive-$parent->year-$parent->month-$parent->day-$parent->mid-next", $next, $sid, $parent);
+        if (module_exists('mailarchive_cache')) {
+          mailarchive_cache_add_message("$mailarchive-$parent->year-$parent->month-$parent->day-$parent->mid-next", $next, $sid, $parent);
+        }
         drupal_set_html_head($next);
         $header_set['next'] = TRUE;
       }
@@ -674,7 +676,9 @@ function mailarchive_view_message_thread($mailarchive, $parent, $op) {
     else {
       if (!isset($header_set['prev'])) {
         $prev = '<link rel="prev" href="'. url($url) .'" />';
-        mailarchive_cache_add_message("$mailarchive-$parent->year-$parent->month-$parent->day-$parent->mid-prev", $prev, $sid, $parent);
+        if (module_exists('mailarchive_cache')) {
+          mailarchive_cache_add_message("$mailarchive-$parent->year-$parent->month-$parent->day-$parent->mid-prev", $prev, $sid, $parent);
+        }
         drupal_set_html_head($prev);
         $header_set['prev'] = TRUE;
       }
