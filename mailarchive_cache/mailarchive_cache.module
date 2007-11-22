@@ -76,21 +76,21 @@ function mailarchive_cache_get_message($cid, $force = FALSE) {
 function mailarchive_cache_dirty($keys = array()) {
   // Mark dirty by cid
   if ($keys['cid']) {
-    db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE cid = '%s'", MAILARCHIVE_CACHE_DIRTY, time(), $keys['cid']);
-    db_query("UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE cid = '%s'", MAILARCHIVE_CACHE_DIRTY, time(), $keys['cid']);
+    db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE cid = '%s' AND dirty != %d", MAILARCHIVE_CACHE_DIRTY, time(), $keys['cid'], MAILARCHIVE_CACHE_DIRTY);
+    db_query("UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE cid = '%s' AND dirty != %d", MAILARCHIVE_CACHE_DIRTY, time(), $keys['cid'], MAILARCHIVE_CACHE_DIRTY);
   }
 
   // Mark dirty by thread_id
   if ($keys['thread_id']) {
     if ($keys['sid']) {
-      db_query('UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE sid = %d AND thread_id = %d', MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['thread_id']);
+      db_query('UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE sid = %d AND thread_id = %d AND dirty != %d', MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['thread_id'], MAILARCHIVE_CACHE_DIRTY);
     }
   }
 
   // Mark dirty by mid
   if ($keys['mid']) {
     if ($keys['sid']) {
-      db_query('UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE sid = %d AND mid = %d', MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['mid']);
+      db_query('UPDATE {cache_mailarchive_message} SET dirty = %d, timestamp = %d WHERE sid = %d AND mid = %d AND dirty != %d', MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['mid'], MAILARCHIVE_CACHE_DIRTY);
     }
   }
 
@@ -99,20 +99,20 @@ function mailarchive_cache_dirty($keys = array()) {
     if ($keys['month']) {
       if ($keys['day']) {
         // Flush overviews from specified day
-        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND month = %d AND (day = %d OR day = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month'], $keys['day']);
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND month = %d AND (day = %d OR day = 0) AND dirty != %d", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month'], $keys['day'], MAILARCHIVE_CACHE_DIRTY);
         // Flush wildcard overviews
-        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND (year = 0 OR month = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid']);
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND (year = 0 OR month = 0) AND dirty != %d", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], MAILARCHIVE_CACHE_DIRTY);
       }
       else {
         // Flush overviews from specified month
-        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND (month = %d OR month = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month']);
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = %d AND (month = %d OR month = 0) AND dirty != %d", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], $keys['month'], MAILARCHIVE_CACHE_DIRTY);
         // Flush wildcard overviews
-        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = 0", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid']);
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND year = 0 AND dirty != %d", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], MAILARCHIVE_CACHE_DIRTY);
       }
     }
     else {
         // Flush overviews from specified year, and wildcards
-        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND (year = %d OR year = 0)", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year']);
+        db_query("UPDATE {cache_mailarchive_overview} SET dirty = %d, timestamp = %d WHERE sid = %d AND (year = %d OR year = 0) AND dirty != %d", MAILARCHIVE_CACHE_DIRTY, time(), $keys['sid'], $keys['year'], MAILARCHIVE_CACHE_DIRTY);
     }
   }
 }
