@@ -102,6 +102,7 @@ function mailarchive_stats_block($op = 'list', $delta = 0) {
  * Provide statistics overview.
  */
 function mailarchive_stats_admin_overview() {
+  $statistics = array();
   $now = time();
   $year = date('Y', $now);
   $month = date('n', $now);
@@ -152,35 +153,40 @@ function mailarchive_stats_admin_overview() {
     $statistics[$subscription->sid]['info'] = $subscription;
   }
 
-  $headers = array(t('Mailing list'), t('This hour'), t('Last hour'), t('Today'), t('Yesterday'), t('This month'), t('Last month'), t('All time'));
-  $rows = array();
+  if (!empty($statistics)) {
+    $headers = array(t('Mailing list'), t('This hour'), t('Last hour'), t('Today'), t('Yesterday'), t('This month'), t('Last month'), t('All time'));
+    $rows = array();
 
-  $rows[] = array(
-    array('data' => t('<b>Total</b>')),
-    array('data' => '<b>'. $statistics['hour'] .'</b>'),
-    array('data' => '<b>'. $statistics['lasthour'] .'</b>'),
-    array('data' => '<b>'. $statistics['today'] .'</b>'),
-    array('data' => '<b>'. $statistics['yesterday'] .'</b>'),
-    array('data' => '<b>'. $statistics['month'] .'</b>'),
-    array('data' => '<b>'. $statistics['lastmonth'] .'</b>'),
-    array('data' => '<b>'. $statistics['all'] .'</b>'),
-  );
-  foreach ($statistics as $stats) {
-    if ($stats['all']) {
-      $rows[] = array(
-        array('data' => $stats['info']->urlname),
-        array('data' => $stats['hour']),
-        array('data' => $stats['lasthour']),
-        array('data' => $stats['today']),
-        array('data' => $stats['yesterday']),
-        array('data' => $stats['month']),
-        array('data' => $stats['lastmonth']),
-        array('data' => $stats['all']),
-      );
+    $rows[] = array(
+      array('data' => t('<b>Total</b>')),
+      array('data' => '<b>'. $statistics['hour'] .'</b>'),
+      array('data' => '<b>'. $statistics['lasthour'] .'</b>'),
+      array('data' => '<b>'. $statistics['today'] .'</b>'),
+      array('data' => '<b>'. $statistics['yesterday'] .'</b>'),
+      array('data' => '<b>'. $statistics['month'] .'</b>'),
+      array('data' => '<b>'. $statistics['lastmonth'] .'</b>'),
+      array('data' => '<b>'. $statistics['all'] .'</b>'),
+    );
+    foreach ($statistics as $stats) {
+      if ($stats['all']) {
+        $rows[] = array(
+          array('data' => $stats['info']->urlname),
+          array('data' => $stats['hour']),
+          array('data' => $stats['lasthour']),
+          array('data' => $stats['today']),
+          array('data' => $stats['yesterday']),
+          array('data' => $stats['month']),
+          array('data' => $stats['lastmonth']),
+          array('data' => $stats['all']),
+        );
+      }
     }
+    $output = theme('table', $headers, $rows);
   }
-
-  return theme('box', t('Statistics'), theme('table', $headers, $rows));
+  else {
+    $output = t('You have not created any mail archive subscriptions.');
+  }
+  return theme('box', t('Statistics'), $output);
 }
 
 /**
