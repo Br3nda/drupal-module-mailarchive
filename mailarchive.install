@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.12 2007/11/18 20:45:08 jeremy Exp $
+// $Id: mailarchive.install,v 1.12.4.1 2009/07/22 01:34:11 jeremy Exp $
 
 /**
  * Mailarchive module database schema.
@@ -121,80 +121,22 @@ function mailarchive_uninstall() {
   db_query('DELETE FROM {variable} WHERE name LIKE "mailarchive_%"');
   // Flush cache so if we re-install we're not using stale variables.
   db_query('DELETE FROM {cache}');
-  // Delete mailarchive messages from search table
-  db_query("DELETE FROM {search_index} WHERE type = 'mailarchive'");
 }
 
 /**
  * Add year, month and day to mailarchive_messages table.
  */
-function mailarchive_update_1() {
-  $ret = array();
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD year int(4) UNSIGNED NOT NULL DEFAULT '0' AFTER received");
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD month int(2) UNSIGNED NOT NULL DEFAULT '0' AFTER year");
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD day int(2) UNSIGNED NOT NULL DEFAULT '0' AFTER month");
-  $result = db_query('SELECT mid, received FROM {mailarchive_messages}');
-  while ($message = db_fetch_object($result)) {
-    db_query('UPDATE {mailarchive_messages} SET year = %d, month = %d, day = %d WHERE mid = %d', format_date($message->received, 'custom', 'Y'), format_date($message->received, 'custom', 'm'), format_date($message->received, 'custom', 'd'), $message->mid);
-  }
-  return $ret;
-}
-
 /**
  * Index year, month and day in mailarchive_messages table.
  */
-function mailarchive_update_2() {
-  $ret = array();
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (year)");
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (month)");
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (day)");
-  return $ret;
-}
-
 /**
  * Add from address to mailarchive_messages table to optimize browsing of
  * mail archives.
  */
-function mailarchive_update_3() {
-  $ret = array();
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD mailfrom varchar(255) NOT NULL DEFAULT '' AFTER sub_thread_id");
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (mailfrom)");
-  // This could take a long time...
-  set_time_limit(0);
-  $result = db_query("SELECT m.mid, a.name, a.mailbox FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from'");
-  while ($message = db_fetch_object($result)) {
-    db_query("UPDATE {mailarchive_messages} SET mailfrom = '%s' WHERE mid = %d", $message->name ? $message->name : $message->mailbox, $message->mid);
-  }
-  return $ret;
-}
-
 /**
  * Index reference and in_reply_to columns mailarchive_messages table, as we
  * search them each time we add a message.
  */
-function mailarchive_update_4() {
-  $ret = array();
-  // This could take a very long time if you have large mailarchives.
-  set_time_limit(0);
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (reference)");
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (in_reply_to)");
-  // This could take a long time...
-  // We do this again, as we neglected to add logic to add mailfrom on newly
-  // fetched mail.
-  $result = db_query("SELECT m.mid, a.name, a.mailbox FROM {mailarchive_messages} m INNER JOIN {mailarchive_messages_addresses} a ON m.mid = a.mid WHERE a.address_type = 'from' AND mailfrom = ''");
-  while ($message = db_fetch_object($result)) {
-    db_query("UPDATE {mailarchive_messages} SET mailfrom = '%s' WHERE mid = %d", $message->name ? $message->name : $message->mailbox, $message->mid);
-  }
-  return $ret;
-}
-
 /**
  * Add a status field to allow messages to be unpublished, i.e. due to spam.
  */
-function mailarchive_update_5() {
-  $ret = array();
-  set_time_limit(0);
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD status int(2) UNSIGNED NOT NULL DEFAULT '0' AFTER mid");
-  $ret[] = update_sql("ALTER TABLE {mailarchive_messages} ADD INDEX (status)");
-  return $ret;
-}

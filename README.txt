@@ -20,14 +20,14 @@ Features:
 
 Requires:
 ---------
- - Drupal 5.0
+ - Drupal 6.0
  - PHP configured with IMAP support (http://php.net/imap)
 
 
 Credits:
 --------
- - Written by Jeremy Andrews <jeremy@kerneltrap.org>
- - Maintained by Jeremy Andrews <jeremy@kerneltrap.org>
+ - Written by Jeremy Andrews <jeremy@tag1consulting.com>
+ - Maintained by Jeremy Andrews <jeremy@tag1consulting.com>
 
 
 Example:
