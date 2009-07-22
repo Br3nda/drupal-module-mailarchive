@@ -717,7 +717,7 @@ function mailarchive_view_day_nav($mailarchive, $year, $month, $day, $op) {
   }
 
   if ($day && $month && $year) {
-    return l(mailarchive_view_format_month($month) ." $day, $year", array('attributes' => "mailarchive/$mailarchive/$year/$month/$day"));
+    return l(mailarchive_view_format_month($month) ." $day, $year", "mailarchive/$mailarchive/$year/$month/$day");
   }
   else {
     return t('None');
