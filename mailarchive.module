@@ -630,7 +630,7 @@ function mailarchive_admin_update() {
     $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
     $node = node_load($node->nid);
     if ($node->dedicated_table) {
-      $table = 'ma__'. $node->urlname;
+      $table = 'ma__'. str_replace('-', '_', $node->urlname);
       $count = db_result(db_query('SELECT COUNT(*) FROM {'. $table .'}'));
       $last = db_result(db_query('SELECT MAX(received) FROM {'. $table .'} WHERE received < %d', time()));
     }
@@ -790,7 +790,7 @@ function mailarchive_confirm_category_delete_submit($form, &$form_state) {
 function _mailarchive_delete_subscription($sid) {
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $subscription->sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
   $subtable = $table .'_addresses';
   $subtable2 = $table .'_attachments';
 
@@ -891,7 +891,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
 
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $subscription->sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
   $subtable = $table .'_addresses';
   if ($node->dedicated_table) {
     $duplicate_message = db_result(db_query('SELECT message_id FROM {'. $table ."} WHERE message_id = '%s'", $message_id));
@@ -1140,7 +1140,7 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
 function _mailarchive_rethread($sid, $thread_id) {
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
   // Find the parent of this thread, if it exists.
   if ($node->dedicated_table) {
     $parent = db_fetch_object(pager_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {'. $table ."} WHERE AND thread_id = $thread_id", 1));
@@ -1230,7 +1230,7 @@ function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $pare
 
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
 
   if ($history[$parent->mid] == $sub_thread_id) {
     // There's something wrong with this thread, it's pointing back to itself,
@@ -1329,7 +1329,7 @@ function _mailarchive_extract_attachments($subscription, $mid, $stream, $message
 
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $subscription->sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
   $subtable2 = $table .'_attachments';
 
   // Attachments are stored in the following directory, created if necessary:
@@ -1600,7 +1600,7 @@ function _mailarchive_fetch($sid) {
 function mailarchive_validate_dedicated_table($node) {
   if (isset($node->dedicated_table) && $node->dedicated_table) {
     // archive configured to have a dedicated table
-    $table = 'ma__'. $node->urlname;
+    $table = 'ma__'. str_replace('-', '_', $node->urlname);
     if (!db_table_exists($table)) {
       $schema = array(
         'description' => t('A dedicated mailarchive table.'),

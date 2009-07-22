@@ -376,7 +376,7 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
     drupal_set_title(t("!list mailing list", array('!list' => $mailarchive)));
     $header = array(t('Year'), t('Messages'));
     if ($node->dedicated_table) {
-      $table = 'ma__'. $node->urlname;
+      $table = 'ma__'. str_replace('-', '_', $node->urlname);
       $result = db_query('SELECT COUNT(year) AS messages, year FROM {'. $table .'} WHERE status = %d GROUP BY year DESC', MAILARCHIVE_MESSAGE_PUBLISHED);
     }
     else {
@@ -394,7 +394,7 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
     drupal_set_title(t("!list mailing list", array('!list' => $mailarchive, '!year' => $year)));
     $header = array(t('Month'), t('Messages'));
     if ($node->dedicated_table) {
-      $table = 'ma__'. $node->urlname;
+      $table = 'ma__'. str_replace('-', '_', $node->urlname);
       $result = db_query('SELECT COUNT(month) AS messages, month FROM {'. $table .'} WHERE year = %d AND status = %d GROUP BY month DESC', $year, MAILARCHIVE_MESSSAGE_PUBLISHED);
     }
     else {
@@ -412,7 +412,7 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
     drupal_set_title(t("!list mailing list", array('!list' => $mailarchive, '!year' => $year, '!month' => mailarchive_view_format_month($month))));
     $header = array(t('Day'), t('Messages'));
     if ($node->dedicated_table) {
-      $table = 'ma__'. $node->urlname;
+      $table = 'ma__'. str_replace('-', '_', $node->urlname);
       $result = db_query('SELECT COUNT(day) AS messages, day FROM {'. $table .'} WHERE year = %d AND month = %d AND status = %d GROUP BY day DESC', $year, $month, MAILARCHIVE_MESSAGE_PUBLISHED);
     }
     else {
@@ -519,7 +519,7 @@ function mailarchive_unpublish_message($mailarchive, $year, $month, $day, $mid) 
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
   if ($node->dedicated_table) {
-    $table = 'ma__'. $node->urlname;
+    $table = 'ma__'. str_replace('-', '_', $node->urlname);
     $thread_id = db_result(db_query('SELECT thread_id FROM {'. $table .'} WHERE mid = %d LIMIT 1', $mid));
     db_query('UPDATE {'. $table .'} SET status = %d WHERE mid = %d', MAILARCHIVE_MESSAGE_UNPUBLISHED, $mid);
   }
@@ -546,7 +546,7 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
   $sid = _mailarchive_sid($mailarchive);
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
 
   if (!$sid) {
     drupal_set_message(t('Unknown mailing list, %mailarchive.', array('%mailarchive' => $mailarchive)));
@@ -821,7 +821,7 @@ function mailarchive_view_next_thread($mailarchive, $message, $op) {
   $sid = _mailarchive_sid($mailarchive);
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
 
   $thread_id = $message->thread_id;
   if ($op == '>') {
@@ -862,7 +862,7 @@ function mailarchive_view_message_thread($mailarchive, $parent, $op) {
   $sid = _mailarchive_sid($mailarchive);
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
 
   $subid = (string)rtrim((string)$parent->sub_thread_id, '/');
   // Look for child message.
@@ -979,7 +979,7 @@ function mailarchive_view_message_date($mailarchive, $message, $op) {
   $sid = _mailarchive_sid($mailarchive);
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
 
   $today = FALSE;
   if ($op == '>') {
@@ -1050,7 +1050,7 @@ function mailarchive_view_message_author($mailarchive, $message, $op) {
   $sid = _mailarchive_sid($mailarchive);
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
 
   $today = FALSE;
   if ($op == '>') {
@@ -1136,7 +1136,7 @@ function theme_mailarchive_view_message_expanded($mailarchive, $messageid) {
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
   if ($node->dedicated_table) {
-    $table = 'ma__'. $node->urlname;
+    $table = 'ma__'. str_replace('-', '_', $node->urlname);
     $subtable = $table .'_addresses';
     $selected = db_fetch_object(db_query('SELECT thread_id, subject FROM {'. $table .'} WHERE mid = %d', $messageid));
     $messages = db_query('SELECT m.mid, m.received, m.year, m.month, m.day, m.subject, m.mailfrom, m.message_id, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {'. $table .'} m INNER JOIN {'. $subtable ."} a ON m.mid = a.mid WHERE m.thread_id = %d AND a.address_type = 'from' AND m.status = %d ORDER BY sub_thread_id DESC", $selected->thread_id, MAILARCHIVE_MESSAGE_PUBLISHED);
@@ -1184,7 +1184,7 @@ function theme_mailarchive_view_message($mailarchive, $messageid) {
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
   if ($node->dedicated_table) {
-    $table = 'ma__'. $node->urlname;
+    $table = 'ma__'. str_replace('-', '_', $node->urlname);
     $subtable = $table .'_addresses';
     $message = db_fetch_object(db_query('SELECT m.mid, m.received, m.year, m.month, m.day, m.subject, m.mailfrom, m.message_id, a.name, a.mailbox, a.host, a.address, m.body, m.thread_id, m.sub_thread_id FROM {'. $table .'} m INNER JOIN {'. $subtable ."} a ON m.mid = a.mid WHERE m.mid = '%d' AND a.address_type = 'from' AND m.status = %d ORDER BY sub_thread_id", $messageid, MAILARCHIVE_MESSAGE_PUBLISHED));
   }
@@ -1288,7 +1288,7 @@ function theme_mailarchive_view_message_header($mailarchive, $message) {
   $sid = _mailarchive_sid($mailarchive);
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
   $node = node_load($node->nid);
-  $table = 'ma__'. $node->urlname;
+  $table = 'ma__'. str_replace('-', '_', $node->urlname);
   $subtable = $table .'_addresses';
 
   $tos = $ccs = array();
@@ -1408,7 +1408,7 @@ function theme_mailarchive_view_message_thread_messages($mailarchive, $message) 
 	
   // List messages in this thread ordered by when received.
   if ($node->dedicated_table) {
-    $table = 'ma__'. $node->urlname;
+    $table = 'ma__'. str_replace('-', '_', $node->urlname);
     $subtable = $table .'_addresses';
     $result = db_query('SELECT m.mid, m.received, m.year, m.month, m.day, m.subject, a.mailbox, a.host, a.name, m.thread_id, m.sub_thread_id FROM {'. $table .'} m INNER JOIN {'. $subtable ."} a ON m.mid = a.mid WHERE m.thread_id = %d AND a.address_type = 'from' AND m.status = %d ORDER BY m.sub_thread_id DESC", $message->thread_id, MAILARCHIVE_MESSAGE_PUBLISHED);
   }
@@ -1671,7 +1671,7 @@ function _mailarchive_view_get_subjects($sid, $mid) {
   $node = node_load($node->nid);
   $subjects = array();
   if ($node->dedicated_table) {
-    $table = 'ma__'. $node->urlname;
+    $table = 'ma__'. str_replace('-', '_', $node->urlname);
     $subjects[] = db_result(db_query('SELECT subject FROM {'. $table .'} WHERE mid = %d AND status = %d', $mid, MAILARCHIVE_MESSAGE_PUBLISHED));
   }
   else {
