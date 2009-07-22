@@ -3,8 +3,8 @@
 /**
  * @file
  * Counts how often mail archive messages are viewed.
- * Copyright (c) 2007.
- *   Jeremy Andrews <jeremy@kerneltrap.org>.  All rights reserved.
+ * Copyright (c) 2007-2009.
+ *   Jeremy Andrews <jeremy@tag1consulting.com>.  All rights reserved.
  */
 
 define('STATS_HOURLY', 1);
@@ -61,18 +61,16 @@ function mailarchive_stats_exit() {
  * Implementation of Drupal's hook_menu().
  * Provide path for administrative statistics.
  */
-function mailarchive_stats_menu($may_cache) {
+function mailarchive_stats_menu() {
   $items = array();
 
-  if ($may_cache) {
-    $items[] = array(
-      'path' => 'admin/content/mailarchive/statistics',
-      'title' => 'Statistics',
-      'type' => MENU_LOCAL_TASK,
-      'callback' => 'mailarchive_stats_admin_overview',
-      'weight' => 8,
-    );
-  }
+  $items['admin/content/mailarchive/statistics'] = array(
+    'title' => 'Statistics',
+    'type' => MENU_LOCAL_TASK,
+    'page callback' => 'mailarchive_stats_admin_overview',
+    'access arguments' => array('maintain mailing list archives'),
+    'weight' => 8,
+  );
 
   return $items;
 }
@@ -92,9 +90,21 @@ function mailarchive_stats_block($op = 'list', $delta = 0) {
       switch ($delta) {
         case 0: // Popular discussions
           $blocks['subject'] = t('Popular discussions');
-          $blocks['content'] = mailarchive_stats_popular_messages();
+          $blocks['content'] = variable_get('mailarchive_stats_popular_block', '');
           return $blocks;
       }
+  }
+}
+
+/**
+ * Update block on a cron job, rather than each time page is accessed.
+ */
+function mailarchive_stats_cron() {
+  $last = variable_get('mailarchive_stats_popular_block_last', 0);
+  if (time() - 3600 >= $last) {
+    variable_set('mailarchive_stats_popular_block_last', time());
+    // rebuild block every hour
+    variable_set('mailarchive_stats_popular_block', mailarchive_stats_popular_messages());
   }
 }
 

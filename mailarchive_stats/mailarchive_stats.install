@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive_stats.install,v 1.1 2007/09/18 21:00:52 jeremy Exp $
+// $Id: mailarchive_stats.install,v 1.1.4.1 2009/07/22 02:51:57 jeremy Exp $
 
 /**
  * Mailarchive Statistics module database schema.
@@ -19,6 +19,7 @@ function mailarchive_stats_install() {
         count INT(11) UNSIGNED NOT NULL DEFAULT '0',
 
         sid INT(11) UNSIGNED NOT NULL DEFAULT '0',
+        thread_id INT(11) UNSIGNED NOT NULL DEFAULT '0',
         year INT(4) UNSIGNED NOT NULL DEFAULT '0',
         month INT(4) UNSIGNED NOT NULL DEFAULT '0',
         day INT(4) UNSIGNED NOT NULL DEFAULT '0',
@@ -37,3 +38,7 @@ function mailarchive_stats_install() {
 function mailarchive_stats_uninstall() {
   db_query('DROP TABLE {mailarchive_statistics}');
 }
+
+/**
+ * Add thread_id to the info we track so we can list "popular threads".
+ */
