@@ -4,7 +4,7 @@
  * @file
  * A module providing online mailing list archives.
  * Copyright (c) 2007-2009.
- *   Jeremy Andrews <jeremy@kerneltrap.org>.  All rights reserved.
+ *   Jeremy Andrews <jeremy@tag1consulting.com>.  All rights reserved.
  */
 
 define('MAILARCHIVE_SUBSCRIPTION_DISABLED', 0);
@@ -162,9 +162,11 @@ function mailarchive_admin_settings_submit($form, &$form_state) {
 function mailarchive_menu() {
   $items = array();
 
+/*
   $items['node/add/mailarchive'] = array(
     'title' => 'Mailing list archive',
     'access arguments' => array('create mailing list archives'));
+*/
   $items['admin/content/mailarchive'] = array(
     'title' => 'Mailing list archives',
     'access arguments' => array('maintain mailing list archives'),
