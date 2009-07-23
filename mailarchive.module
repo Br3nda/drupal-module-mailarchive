@@ -1717,8 +1717,8 @@ function mailarchive_validate_dedicated_table($node) {
           'status' => array('status'),
           'created' => array('created'),
           'received' => array('received'),
-          'year' => array('year'),
-          'month' => array('month'),
+          'year' => array('year', 'month', 'thread_id'),
+          'month' => array('month', 'year', 'thread_id'),
           'day' => array('day'),
           'thread_id' => array('thread_id'),
           'sub_thread_id' => array('sub_thread_id'),
@@ -1778,7 +1778,7 @@ function mailarchive_validate_dedicated_table($node) {
           ),
         ),
         'indexes' => array(
-          'mid' => array('mid'),
+          'mid' => array('mid', 'host'),
         ),
         'primary key' => array('aid'),
       );
