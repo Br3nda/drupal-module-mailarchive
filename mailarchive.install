@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.12.4.3 2009/07/22 20:15:19 jeremy Exp $
+// $Id: mailarchive.install,v 1.12.4.3.2.1 2010/01/01 01:32:16 Jeremy Exp $
 
 /**
  * Mailarchive module database schema.
@@ -35,73 +35,6 @@ function mailarchive_install() {
         KEY urlname (urlname),
         KEY message_count (message_count)
       );");
-      // The actual mailing list messages.
-      db_query("CREATE TABLE {mailarchive_messages} (
-        mid int(11) UNSIGNED AUTO_INCREMENT,
-        sid int(11) UNSIGNED NOT NULL DEFAULT '0',
-        status int(2) UNSIGNED NOT NULL DEFAULT '0',
-        created int(11) UNSIGNED NOT NULL DEFAULT '0',
-        received int(11) UNSIGNED NOT NULL DEFAULT '0',
-        year int(4) UNSIGNED NOT NULL DEFAULT '0',
-        month int(2) UNSIGNED NOT NULL DEFAULT '0',
-        day int(2) UNSIGNED NOT NULL DEFAULT '0',
-        headers text NOT NULL DEFAULT '',
-        message_id varchar(255) NOT NULL DEFAULT '',
-        reference varchar(255) NOT NULL DEFAULT '',
-        in_reply_to varchar(255) NOT NULL DEFAULT '',
-        multiple_in_reply_to int(1) NOT NULL DEFAULT '0',
-        thread_id int(11) UNSIGNED NOT NULL DEFAULT '0',
-        sub_thread_id varchar(255) NOT NULL DEFAULT '0',
-        mailfrom varchar(255) NOT NULL DEFAULT '',
-        subject varchar(255) NOT NULL DEFAULT '',
-        body text NOT NULL DEFAULT '',
-        attachments int(3) UNSIGNED DEFAULT '0',
-        attachments_path varchar(255) NOT NULL DEFAULT '',
-        PRIMARY KEY (mid),
-        UNIQUE (sid, message_id),
-        KEY (status),
-        KEY (created),
-        KEY (received),
-        KEY (year),
-        KEY (month),
-        KEY (day),
-        KEY (message_id),
-        KEY (thread_id),
-        KEY (sub_thread_id),
-        KEY (subject)
-      ) /*!40100 DEFAULT CHARACTER SET UTF8 */");
-      // Attachment index.  Actual attachments stored in filesystem.
-      db_query("CREATE TABLE {mailarchive_messages_attachments} (
-        aid int(11) NOT NULL AUTO_INCREMENT,
-        sid int(11) NOT NULL DEFAULT '0',
-        mid int(11) NOT NULL DEFAULT '0',
-        name varchar(255) NOT NULL DEFAULT '',
-        bytes int(8) NOT NULL DEFAULT '0',
-        part int(3) NOT NULL DEFAULT '0',
-        PRIMARY KEY (aid),
-        UNIQUE KEY (sid, mid, part),
-        KEY (name),
-        KEY (mid)
-      ) /*!40100 DEFAULT CHARACTER SET UTF8 */");
-      // Address index.
-      db_query("CREATE TABLE {mailarchive_messages_addresses} (
-        aid int(11) NOT NULL AUTO_INCREMENT,
-        sid int(11) UNSIGNED NOT NULL DEFAULT '0',
-        mid int(11) UNSIGNED NOT NULL DEFAULT '0',
-        name varchar(255) NOT NULL DEFAULT '',
-        mailbox varchar(255) NOT NULL DEFAULT '',
-        host varchar(255) NOT NULL DEFAULT '',
-        address varchar(255) NOT NULL DEFAULT '0',
-        address_type varchar(10) NOT NULL DEFAULT '0',
-        PRIMARY KEY (aid),
-        UNIQUE KEY (sid, mid, address, address_type),
-        KEY (mid),
-        KEY (name),
-        KEY (mailbox),
-        KEY (host),
-        KEY (address),
-        KEY (address_type)
-      ) /*!40100 DEFAULT CHARACTER SET UTF8 */");
   }
 }
 
@@ -114,31 +47,11 @@ function mailarchive_uninstall() {
     node_delete($subscription->nid);
   }
 
-  $tables = array('mailarchive_subscriptions', 'mailarchive_messages', 'mailarchive_messages_addresses', 'mailarchive_messages_attachments');
-  foreach ($tables as $table) {
-    db_query('DROP TABLE {%s}', $table);
-    drupal_set_message(t('Dropped table %table.', array('%table' => $table)));
-  }
+  db_query('DROP TABLE {mailarchive_subscriptions}');
+  drupal_set_message(t('Dropped table mailarchive_subscriptions.'));
 
   db_query('DELETE FROM {variable} WHERE name LIKE "mailarchive_%"');
   // Flush cache so if we re-install we're not using stale variables.
   db_query('DELETE FROM {cache}');
 }
 
-/**
- * Add support for storing mail archives in dedicated tables.
- */
-function mailarchive_update_6001() {
-  $ret = array();
-  db_add_field($ret, 'mailarchive_subscriptions', 'dedicated_table',
-    array(
-      'type' => 'int',
-      'not null' => TRUE,
-      'unsigned' => TRUE,
-      'default' => 0,
-      'description' => 'Determine if archives live in shared or dedicated table.',
-    ),
-    array()
-  );
-  return $ret;
-}

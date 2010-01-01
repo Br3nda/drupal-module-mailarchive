@@ -10,49 +10,65 @@
 /**
  * Implementation of Drupal's hook_menu().
  */
-function mailarchive_rss_menu($may_cache) {
+function mailarchive_rss_menu() {
   $items = array();
 
+/* TODO
+   Non menu code that was placed in hook_menu under the '!$may_cache' block
+   so that it could be run during initialization, should now be moved to hook_init.
+   Previously we called hook_init twice, once early in the bootstrap process, second
+   just after the bootstrap has finished. The first instance is now called boot
+   instead of init.
+   
+   In Drupal 6, there are now two hooks that can be used by modules to execute code
+   at the beginning of a page request. hook_boot() replaces hook_boot() in Drupal 5
+   and runs on each page request, even for cached pages. hook_boot() now only runs
+   for non-cached pages and thus can be used for code that was previously placed in
+   hook_menu() with $may_cache = FALSE:
+   
+   Dynamic menu items under a '!$may_cache' block can often be simplified
+   to remove references to arg(n) and use of '%<function-name>' to check
+   conditions. See http://drupal.org/node/103114.
+   
+   The title and description arguments should not have strings wrapped in t(),
+   because translation of these happen in a later stage in the menu system.
+*/
   if (!$may_cache) {
     if ($sid = _mailarchive_sid(arg(1))) {
       $mailarchive = arg(1);
       if (is_numeric($mid = arg(3))) {
         // Validate that this $mid is really part of the specified $sid.
         if (db_result(db_query("SELECT sid FROM {mailarchive_messages} WHERE mid = %d and sid = %d AND status = %d", $mid, $sid, MAILARCHIVE_MESSAGE_PUBLISHED))) {
-          $items[] = array(
-            'path' => "mailarchive/$mailarchive/feed/$mid/from/name",
+          $items["mailarchive/$mailarchive/feed/$mid/from/name"] = array(
             'title' => 'from name RSS feed',
             'type' => MENU_CALLBACK,
-            'callback' => 'mailarchive_rss_feed_fromname',
-            'callback arguments' => array($mailarchive, $mid),
-            'access' => user_access('access content'),
+            'page callback' => 'mailarchive_rss_feed_fromname',
+            'page arguments' => array($mailarchive, $mid),
+            'access arguments' => array('access content'),
           );
-          $items[] = array(
-            'path' => "mailarchive/$mailarchive/feed/$mid/from/address",
+          $items["mailarchive/$mailarchive/feed/$mid/from/address"] = array(
             'title' => 'from address RSS feed',
             'type' => MENU_CALLBACK,
-            'callback' => 'mailarchive_rss_feed_fromname',
-            'callback arguments' => array($mailarchive, $mid),
-            'access' => user_access('access content'),
+            'page callback' => 'mailarchive_rss_feed_fromname',
+            'page arguments' => array($mailarchive, $mid),
+            'access arguments' => array('access content'),
           );
-          $items[] = array(
-            'path' => "mailarchive/$mailarchive/feed/$mid/subject",
+          $items["mailarchive/$mailarchive/feed/$mid/subject"] = array(
             'title' => 'subject RSS feed',
             'type' => MENU_CALLBACK,
-            'callback' => 'mailarchive_rss_feed_subject',
-            'callback arguments' => array($mailarchive, $mid),
-            'access' => user_access('access content'),
+            'page callback' => 'mailarchive_rss_feed_subject',
+            'page arguments' => array($mailarchive, $mid),
+            'access arguments' => array('access content'),
           );
         }
       }
       else {
-        $items[] = array(
-          'path' => "mailarchive/$mailarchive/feed",
+        $items["mailarchive/$mailarchive/feed"] = array(
           'title' => 'RSS feed',
           'type' => MENU_CALLBACK,
-          'callback' => 'mailarchive_rss_feed',
-          'callback arguments' => array($mailarchive),
-          'access' => user_access('access content'),
+          'page callback' => 'mailarchive_rss_feed',
+          'page arguments' => array($mailarchive),
+          'access arguments' => array('access content'),
         );
       }
     }
@@ -141,7 +157,7 @@ function mailarchive_rss_feed_subject($mailarchive, $mid) {
 function mailarchive_rss_items($mailarchive, $result) {
   $items = '';
   while ($message = db_fetch_object($result)) {
-    $link = url("mailarchive/$mailarchive/$message->year/$message->month/$message->day/$message->mid", NULL, NULL, 1);
+    $link = url("mailarchive/$mailarchive/$message->year/$message->month/$message->day/$message->mid", array('absolute' => TRUE));
 
     // From:
     $from = db_fetch_object(db_query("SELECT name, mailbox, host FROM {mailarchive_messages_addresses} WHERE mid = %d AND address_type = 'from'", $message->mid));
@@ -173,7 +189,7 @@ function mailarchive_rss_items($mailarchive, $result) {
       $item .= $body;
     }
 
-    $item .= '<p>'. l(t('read more'), $link, NULL, NULL, NULL, TRUE);
+    $item .= '<p>'. l(t('read more'), $link, array('absolute' => TRUE));
 
     $extra = module_invoke_all('mailarchive_api', 'rss item', $mailarchive, $item, $message);
     if (is_array($extra)) {
@@ -227,7 +243,7 @@ function mailarchive_rss_mailarchive_api($op, $mailarchive, $arg1 = NULL, $arg2 
   switch ($op) {
     case 'list overview':
     case 'view thread':
-      $url = url("mailarchive/$mailarchive/feed", NULL, NULL, TRUE);
+      $url = url("mailarchive/$mailarchive/feed", array('absolute' => TRUE));
       $description = t('%mailarchive RSS', array('%mailarchive' => $mailarchive));
       return mailarchive_rss_feed_icon($url, $description);
 
@@ -236,7 +252,7 @@ function mailarchive_rss_mailarchive_api($op, $mailarchive, $arg1 = NULL, $arg2 
       // message in a given thread is clicked.  This improves caching.
       $thread = db_fetch_object(db_query('SELECT sid, subject FROM {mailarchive_messages} WHERE mid = %d AND status = %d', $arg1, MAILARCHIVE_MESSAGE_PUBLISHED));
       $min = db_result(db_query("SELECT MIN(mid) FROM {mailarchive_messages} WHERE sid = %d AND subject = '%s' AND status = %d", $thread->sid, addslashes($thread->subject), MAILARCHIVE_MESSAGE_PUBLISHED));
-      $url = url("mailarchive/$mailarchive/feed/$min/subject", NULL, NULL, TRUE);
+      $url = url("mailarchive/$mailarchive/feed/$min/subject", array('absolute' => TRUE));
       $description = t('%mailarchive subject RSS', array('%mailarchive' => $mailarchive));
       return mailarchive_rss_feed_icon($url, $description);
 
@@ -245,13 +261,13 @@ function mailarchive_rss_mailarchive_api($op, $mailarchive, $arg1 = NULL, $arg2 
       // message in a given thread is clicked.  This improves caching.
       $thread = db_fetch_object(db_query('SELECT sid, mailfrom FROM {mailarchive_messages} WHERE mid = %d AND status = %d', $arg1, MAILARCHIVE_MESSAGE_PUBLISHED));
       $min = db_result(db_query("SELECT MIN(mid) FROM {mailarchive_messages} WHERE sid = %d AND mailfrom = '%s' AND status = %d", $thread->sid, $thread->mailfrom, MAILARCHIVE_MESSAGE_PUBLISHED));
-      $url = url("mailarchive/$mailarchive/feed/$min/from/name", NULL, NULL, TRUE);
+      $url = url("mailarchive/$mailarchive/feed/$min/from/name", array('absolute' => TRUE));
       $description = t('%mailarchive from name RSS', array('%mailarchive' => $mailarchive));
       return mailarchive_rss_feed_icon($url, $description);
 
     case 'search from address':
       // TODO: Reduce mid to improve caching.
-      $url = url("mailarchive/$mailarchive/feed/$arg1/from/address", NULL, NULL, TRUE);
+      $url = url("mailarchive/$mailarchive/feed/$arg1/from/address", array('absolute' => TRUE));
       $description = t('%mailarchive from address RSS', array('%mailarchive' => $mailarchive));
       return mailarchive_rss_feed_icon($url, $description);
   }

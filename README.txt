@@ -22,6 +22,7 @@ Requires:
 ---------
  - Drupal 6.0
  - PHP configured with IMAP support (http://php.net/imap)
+ - MongoDB 1.2+
 
 
 Credits:

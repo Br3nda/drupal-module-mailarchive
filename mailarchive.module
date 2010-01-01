@@ -200,7 +200,7 @@ function mailarchive_menu() {
     'page arguments' => array(3),
     'access arguments' => array('maintain mailing list archives')
   );
-  $items['admin/content/mailarchive/%/mailarchive/update'] = array(
+  $items['admin/content/mailarchive/%/update'] = array(
     'type' => MENU_SUGGESTED_ITEM,
     'page callback' => 'mailarchive_admin_update',
     'page arguments' => array(3),
@@ -345,19 +345,6 @@ function mailarchive_form(&$node) {
     '#description' => t('Select whether or not messages should be deleted from the mail server after they have been downloaded and archived.')
   );
 
-  $form['performance'] = array(
-    '#type' => 'fieldset',
-    '#title' => t('Performance'),
-    '#collapsible' => TRUE,
-  );
-  $form['performance']['dedicated_table'] = array(
-    '#type' => 'checkbox',
-    '#title' => t('Dedicated table'),
-    '#description' => t('Check this box to move all of the message for this mailing list into their own table.  This action may take a long time to complete if there are already a lot of messages in this mailing list.  This action can not be undone -- once an archive is moved into its own table it can not be moved back into the shared table.'),
-    '#default_value' => isset($node->dedicated_table) ? $node->dedicated_table : FALSE,
-    '#disabled' => isset($node->dedicated_table) && $node->dedicated_table ? TRUE : FALSE,
-  );
-
   return $form;
 }
 
@@ -441,7 +428,6 @@ function mailarchive_node_form_validate($form, &$form_state) {
  */
 function mailarchive_insert($node) {
   db_query("INSERT INTO {mailarchive_subscriptions} (nid, created, urlname, server_name, server_username, server_password, mailbox, protocol, port, delete_read, subscription_status, dedicated_table) VALUES (%d, %d, '%s', '%s', '%s', '%s', '%s', %d, %d, %d, %d, %d)", $node->nid, time(), $node->urlname, $node->server_name, $node->server_username, $node->server_password, $node->mailbox, $node->protocol, $node->port, $node->delete_read, $node->subscription_status, $node->dedicated_table);
-  mailarchive_validate_dedicated_table($node);
 }
 
 /**
@@ -467,7 +453,6 @@ function mailarchive_load($node) {
  */
 function mailarchive_update($node) {
   db_query("UPDATE {mailarchive_subscriptions} SET urlname = '%s',server_name = '%s', server_username = '%s', server_password = '%s', mailbox = '%s', protocol = %d, port = %d, delete_read = %d, subscription_status = %d, dedicated_table = %d WHERE nid = %d", $node->urlname, $node->server_name, $node->server_username, $node->server_password, $node->mailbox, $node->protocol, $node->port, $node->delete_read, $node->subscription_status, $node->dedicated_table, $node->nid);
-  mailarchive_validate_dedicated_table($node);
 }
 
 /**
@@ -623,21 +608,28 @@ function mailarchive_admin_category_form_submit($form, &$form_state) {
 /**
  * Update statistics about mailing list.
  */
-function mailarchive_admin_update() {
-  $urlname = arg(3);
-  $sid = (int)db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $urlname));
-  if ($sid) {
-    $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
-    $node = node_load($node->nid);
-    if ($node->dedicated_table) {
-      $table = 'ma__'. str_replace('-', '_', $node->urlname);
-      $count = db_result(db_query('SELECT COUNT(*) FROM {'. $table .'}'));
-      $last = db_result(db_query('SELECT MAX(received) FROM {'. $table .'} WHERE received < %d', time()));
+function mailarchive_admin_update($urlname) {
+  if ($sid = _mailarchive_sid($urlname)) {
+    // connect to mongo
+    $collection = _mongo_connect();
+
+    // count messages
+    $count = $collection->count();
+
+    // find the received timestamp of the last valid message
+    $cursor = $collection->find(array('sid' => intval($sid), 'received' => array('$lt' => intval(time()))), array('received'));
+    $cursor->sort(array('received' => -1));
+    $cursor->limit(1);
+
+    if ($cursor->hasNext()) {
+      $last = $cursor->getNext();
+      $last = $last['received'];
     }
     else {
-      $count = db_result(db_query('SELECT COUNT(*) FROM {mailarchive_messages} WHERE sid = %d', $sid));
-      $last = db_result(db_query('SELECT MAX(received) FROM {mailarchive_messages} WHERE sid = %d AND received < %d', $sid, time()));
+      $last = 0;
     }
+
+    // record the updated data
     db_query('UPDATE {mailarchive_subscriptions} SET message_count = %d, last_message = %d WHERE sid = %d', $count, $last, $sid);
     drupal_set_message(t('Mailing list %list updated.', array('%list' => $urlname)));
   }
@@ -786,6 +778,7 @@ function mailarchive_confirm_category_delete_submit($form, &$form_state) {
 
 /**
  * Delete a subscription and all its messages.
+ * TODO: update this function to work with mongo
  */
 function _mailarchive_delete_subscription($sid) {
   $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $subscription->sid));
@@ -794,6 +787,7 @@ function _mailarchive_delete_subscription($sid) {
   $subtable = $table .'_addresses';
   $subtable2 = $table .'_attachments';
 
+  // MONGO-TODO: conversion
   // Delete all attachments.
   if ($node->dedicated_table) {
     $result = db_query('SELECT mid, sid, attachments, attachments_path FROM {'. $subtable2 .'} WHERE attachments > 0');
@@ -818,6 +812,7 @@ function _mailarchive_delete_subscription($sid) {
     }
   }
 
+  // MONGO-TODO: conversion
   if ($node->dedicated_table) {
     db_query('DROP TABLE {'. $table .'}');
     db_query('DROP TABLE {'. $subtable .'}');
@@ -844,186 +839,95 @@ function _mailarchive_delete_subscription($sid) {
  *  If successfully saved, the message id if the new message.
  */
 function _mailarchive_message_save($subscription, $stream, $header, $message) {
-  // TODO: lock mailarchive_messages table
-  
-  // Gather some data for optimizing queries that don't need to span the entire subscription but can instead be limited to the
-  // current week.
-  $year = date('Y', $header->udate);
-  $month = date('m', $header->udate);
-  $day = date('d', $header->udate);
-  $spans_year = $spans_month = FALSE;
-  if (($day - 7) < 1) {
-    if (($month -1) < 1) {
-      $spans_year = TRUE;
-    }
-    else {
-      $spans_month = TRUE;
-    }
-  }
+  // Extract the message reference, if existing
+  //$reference = rtrim(ltrim(substr(strrchr($header->reference, '<'), 0), '<'), '>');
+  preg_match("/<[^<^>]*/", $header->reference, $reference);
 
-  // Attempt to grab the message reference, if existing
-  $reference = rtrim(ltrim(substr(strrchr($header->reference, '<'), 0), '<'), '>');
-
-  // Attempt to grab the message_id (everything within the first set of <>'s)
+  // Extract the message_id (everything within the first set of <>'s)
   preg_match("/<[^<^>]*/", $header->message_id, $message_id);
   $message_id = ltrim($message_id[0], '<');
 
-  // The in_reply_to header line can contain multiple tags that look like a
-  // message ID, but only one of them will be valid.  We grab all of them,
-  // holding onto them until we figure out which one is actually valid.
-  // If it's not immediately obvious which one is valid (for example, if
-  // the current message arrived before the message it was replying to) we
-  // save all possible matches in the database as a comma seperated list and
-  // set the multiple_in_reply_to bit.
+  // Extract all in_reply_to headers (tracks full thread).
   preg_match_all("/<[^<^>]*/", $header->in_reply_to, $in_reply_tos);
   $in_reply_to = array();
   foreach ($in_reply_tos[0] as $irt) {
     $in_reply_to[] = ltrim($irt, '<');
   }
-  if (count($in_reply_to) > 1) {
-    $multiple_in_reply_to = 1;
-  }
-  else {
-    // There's only one in_reply_to (or none)
-    $multiple_in_reply_to = 0;
-    $in_reply_to = implode(',', $in_reply_to);
-  }
 
-  $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $subscription->sid));
-  $node = node_load($node->nid);
-  $table = 'ma__'. str_replace('-', '_', $node->urlname);
-  $subtable = $table .'_addresses';
-  if ($node->dedicated_table) {
-    $duplicate_message = db_result(db_query('SELECT message_id FROM {'. $table ."} WHERE message_id = '%s'", $message_id));
-  }
-  else {
-    $duplicate_message = db_result(db_query("SELECT sid FROM {mailarchive_messages} WHERE message_id = '%s' AND sid = %d", $message_id, $subscription->sid));
-  }
-  if ($duplicate_message) {
+  // connect to mongo using default parameters
+  $collection = _mongo_connect();
+
+  $duplicate_message = $collection->findOne(array('message_id' => $message_id), array('sid'));
+  if (isset($duplicate_message)) {
     // We've downloaded this message before, maybe we're re-indexing.  Ignore.
+    drupal_set_message("message_id($message_id) is a duplicate");
     return 0;
   }
 
   // Calculate the current thread_id -- see comment_render() in the comment
   // module for details on how this works.
-  if ($reference || $in_reply_to) {
-    if ($multiple_in_reply_to) {
-      foreach ($in_reply_to as $reply_message_id) {
-        // We were doing a max() on the thread_id and sub_thread_id which seems
-        // odd -- and was also very inefficient.  On the off chance that we see
-        // a duplicate message_id, we'll just use LIMIT 1.
-        if ($node->dedicated_table) {
-          $parent = db_fetch_object(db_query('SELECT thread_id, sub_thread_id FROM {'. $table ."} WHERE message_id = '%s' LIMIT 1", $reply_message_id));
-        }
-        else {
-          $parent = db_fetch_object(db_query("SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d and message_id = '%s' LIMIT 1", $subscription->sid, $reply_message_id));
-        }
-        if ($parent->thread_id) {
-          // We found a valid parent that we are in_reply_to.
-          $in_reply_to = $reply_message_id;
-          $multiple_in_reply_to = 0;
-        }
-      }
-    }
-    else if ($in_reply_to) {
-      // Look for parent referenced in in_reply_to.
-      if ($node->dedicated_table) {
-        $parent = db_fetch_object(db_query('SELECT thread_id, sub_thread_id FROM {'. $table ."} WHERE message_id = '%s' LIMIT 1", $in_reply_to));
-      }
-      else {
-        $parent = db_fetch_object(db_query("SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id = '%s' LIMIT 1", $subscription->sid, $in_reply_to));
-      }
-    }
-    else {
-      // Look for parent referenced in reference.
-      // TODO: This one is going to be expensive... we should query a smaller section first, then slowly expand.
-      drupal_set_message('TODO: We hit an expensive query, optimize it! A22C');
-      if ($node->dedicated_table) {
-        $parent = db_fetch_object(db_query('SELECT thread_id, sub_thread_id FROM {'. $table .'} WHERE message_id LIKE "%%%s%%"', $reference));
-      }
-      else {
-        $parent = db_fetch_object(db_query('SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id LIKE "%%%s%%"', $subscription->sid, $reference));
+  $parent = '';
+  if (is_array($in_reply_to) && !empty($in_reply_to)) {
+    foreach ($in_reply_to as $reply_message_id) {
+      $parent = $collection->findOne(array('sid' => intval($subscription->sid), 'message_id' => $reply_message_id), array('thread_id', 'sub_thread_id'));
+      if (isset($parent)) {
+        // found matching parent
+        break;
       }
     }
   }
+  if (!isset($parent) && !empty($referene)) {
+    $parent = $collection->findOne(array('sid' => intval($subscription->sid), 'message_id' => $reference), array('thread_id', 'sub_thread_id'));
+  }
 
-  if ($parent->thread_id) {
-    $thread_id = $parent->thread_id;
-    $parent_subid = (string)rtrim((string)$parent->sub_thread_id, '/');
+  if (isset($parent['thread_id'])) {
+    $thread_id = $parent['thread_id'];
+    $parent_subid = $parent['sub_thread_id'];
     // We know the last subid at the parent level, find it at our level.
-    if ($node->dedicated_table) {
-      $previous = db_result(db_query('SELECT MAX(sub_thread_id) FROM {'. $table ."} WHERE thread_id = '%s' AND sub_thread_id LIKE '%s.%%'", $thread_id, $parent_subid));
-    }
-    else {
-      $previous = db_result(db_query("SELECT MAX(sub_thread_id) FROM {mailarchive_messages} WHERE sid = %d AND thread_id = '%s' AND sub_thread_id LIKE '%s.%%'", $subscription->sid, $thread_id, $parent_subid));
-    }
-    if ($previous == '') {
-      // We're the first subid at our level.
-      $sub_thread_id = $parent_subid .'.1/';
-    }
-    else {
+    $cursor = $collection->find(array(
+      'sid' => intval($subscription->sid),
+      'thread_id' => intval($thread_id),
+      'sub_thread_id' => array('$gt' => doubleval($parent_subid)),
+      ), array('sub_thread_id'));
+    $cursor->sort(array('sub_thread_id' => -1));
+    $cursor->limit(1);
+    if ($cursor->hasNext()) {
+      $max = $cursor->getNext();
       // The general idea is explained in function comment_render() in the
       // core comment module.  We modify the logic by adding a sub_thread_id
       // which significantly increase the number of threads that can be
       // tracked.
-      $previous = rtrim($previous, '/');
+      $previous = $max['sub_thread_id'];
       $parts = explode('.', $previous);
       $parent_depth = count(explode('.', $parent_subid));
       $last = $parts[$parent_depth];
 
       $decimals = (string)substr($last, 0, strlen($last) - 1);
-      $units = substr($last, -1, 1);
+      $units = (int)substr($last, -1, 1);
       $units++;
       if ($units == 10) {
         $units = '90';
       }
-      $sub_thread_id = "$parent_subid.". $decimals.$units .'/';
+      $sub_thread_id = "$parent_subid.". $decimals.$units;
+    }
+    else {
+      // We're the first subid at our level.
+      $sub_thread_id = $parent_subid .'.1';
     }
   }
   else {
     // This message has no parent.
-    if ($spans_year) {
-      // We're less than 7 days into the month of January, so search all of this
-      // January, and all of December the previous year.
-      if ($node->dedicated_table) {
-        $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {'. $table .'} WHERE (year = %d AND month = %d) OR (year = %d AND month = 12)', $year, $month, $year - 1));
-      }
-      else {
-        $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {mailarchive_messages} WHERE sid = %d AND ((year = %d AND month = %d) OR (year = %d AND month = 12))', $subscription->sid, $year, $month, $year - 1));
-      }
-    }
-    else if ($spans_month) {
-      // We're less than 7 days into the current months, so search all of this
-      // month and the previous month.
-      if ($node->dedicated_table) {
-        $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {'. $table .'} WHERE year = %d AND (month = %d OR month = %d)', $year, $month, $month - 1));
-      }
-      else {
-        $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND (month = %d OR month = %d)', $subscription->sid, $year, $month, $month - 1));
-      }
+    $cursor = $collection->find(array('sid' => intval($subscription->sid)), array('thread_id'));
+    $cursor->sort(array('thread_id' => -1));
+    $cursor->count(1);
+    if ($cursor->hasNext()) {
+      $max = $cursor->getNext();
+      $thread_id = (int)$max['thread_id'] + 1;
     }
     else {
-      // We're more than 7 days into the current month, so search only this month.
-      if ($node->dedicated_table) {
-        $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {'. $table .'} WHERE year = %d AND month = %d', $year, $month));
-      }
-      else {
-        $previous_id = db_result(db_query('SELECT MAX(thread_id) FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d', $subscription->sid, $year, $month));
-      }
+      $thread_id = 1;
     }
-    $thread_id = (int)++$previous_id;
-    $sub_thread_id = '1/';
-  }
-
-  if ($multiple_in_reply_to) {
-    // in_reply_to is an array, collapse it into a comma seperated list so we
-    // can store it in the database.
-    if (is_array($in_reply_to)) {
-      $in_reply_to = implode(',', $in_reply_to);
-    }
-    else {
-      $multiple_in_reply_to = 0;
-    }
+    $sub_thread_id = '1';
   }
 
   // Grab the message body.
@@ -1038,94 +942,69 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
     $mailfrom = _mailarchive_mime_decode($mailfrom[0]->mailbox);
   }
 
-  // Save the new message.
-  if ($node->dedicated_table) {
-    db_query('INSERT INTO {'. $table ."} (created, received, year, month, day, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, mailfrom, subject, body, attachments) VALUES (%d, %d, %d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', '%s', %d)", time(), $header->udate, $year, $month, $day, serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, $mailfrom, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
+/*
+ * TODO: Extract/store attachments with GridFS
+  // extract attachments
+  $parts = count($structure->parts);
+  if ($parts >= 2) {
+    $attachments = _mailarchive_extract_attachments($subscription, $mid, $stream, $message, $structure, $parts);
   }
-  else {
-    db_query("INSERT INTO {mailarchive_messages} (sid, created, received, year, month, day, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, mailfrom, subject, body, attachments) VALUES (%d, %d, %d, %d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', '%s', %d)", $subscription->sid, time(), $header->udate, $year, $month, $day, serialize($header), $message_id, $reference, $in_reply_to, $multiple_in_reply_to, $thread_id, $sub_thread_id, $mailfrom, _mailarchive_mime_decode(substr($header->subject, 0, 255)), $body, 0);
-  }
-  if ($node->dedicated_table) {
-    $mid = db_last_insert_id($table, 'mid');
-  }
-  else {
-    $mid = db_last_insert_id('mailarchive_messages', 'mid');
-  }
-  if (module_exists('mailarchive_cache')) {
-    mailarchive_cache_dirty(array('sid' => $subscription->sid, 'mid' => $mid, 'thread_id' => $thread_id, 'year' => $year, 'month' => $month, 'day' => $day));
-  }
+*/
 
-  // If enabled, download any attachments.
-  if (variable_get('mailarchive_save_attachments', 0)) {
-    $parts = count($structure->parts);
-    if ($parts >= 2) {
-      $attachments = _mailarchive_extract_attachments($subscription, $mid, $stream, $message, $structure, $parts);
-    }
-  }
-
-  // Save header information to allow for searching
+  // store from, to, and cc addresses in indexed array
   foreach (array('from', 'to', 'cc') as $header_type) {
     if ($header->$header_type) {
       foreach ($header->$header_type as $id => $address) {
-        if ($node->dedicated_table) {
-          $existing = db_result(db_query('SELECT mid FROM {'. $subtable ."} WHERE mid = %d AND mailbox = '%s' AND host = '%s' AND address_type = '%s'", $mid, _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), $header_type));
+        $email =_mailarchive_mime_decode($address->mailbox) .'@'. _mailarchive_mime_decode($address->host);
+        if (!empty($address->personal)) {
+          $name = _mailarchive_mime_decode($address->personal);
+          $full = "$name <$email>";
         }
         else {
-          $existing = db_result(db_query("SELECT sid FROM {mailarchive_messages_addresses} WHERE sid = %d AND mid = %d AND mailbox = '%s' AND host = '%s' AND address_type = '%s'", $subscription->sid, $mid, _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), $header_type));
+          $name = $email;
+          $full = $email;
         }
-        if (!$existing) {
-          // Prevent duplicates.
-          if ($node->dedicated_table) {
-            db_query('INSERT INTO {'. $subtable ."} (mid, name, mailbox, host, address, address_type) VALUES(%d, '%s', '%s', '%s', '%s', '%s')", $mid, _mailarchive_mime_decode($address->personal), _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), _mailarchive_mime_decode($address->mailbox) .'@'. _mailarchive_mime_decode($address->host) , $header_type);
-          }
-          else {
-            db_query("INSERT INTO {mailarchive_messages_addresses} (sid, mid, name, mailbox, host, address, address_type) VALUES(%d, %d, '%s', '%s', '%s', '%s', '%s')", $subscription->sid, $mid, _mailarchive_mime_decode($address->personal), _mailarchive_mime_decode($address->mailbox), _mailarchive_mime_decode($address->host), _mailarchive_mime_decode($address->mailbox) .'@'. _mailarchive_mime_decode($address->host) , $header_type);
-          }
-        }
+        $addresses[$header_type][] = array(
+          'email' => $email,
+          'name' => $name,
+          'full' => $full,
+        );
       }
     }
   }
 
-  // Check if replies to this messages are already archived, message may have
-  // arrived out of order.  To optimize query, we only search 1-5 weeks worth
-  // of data (a minimum of 7 days).
-  if ($spans_year) {
-    // We're less than 7 days into the month of January, so search all of this
-    // January, and all of December the previous year.
-    if ($node->dedicated_table) {
-      $child = db_fetch_object(db_query('SELECT thread_id FROM {'. $table ."} WHERE (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND ((year = %d AND month = %d) OR (year = %d AND month = 12))", $message_id, $message_id, $year, $month, $year - 1));
-    }
-    else {
-      $child = db_fetch_object(db_query("SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND ((year = %d AND month = %d) OR (year = %d AND month = 12))", $subscription->sid, $message_id, $message_id, $year, $month, $year - 1));
-    }
+  $message = array(
+    'sid' => intval($subscription->sid),
+    'mid' => intval(_mailarchive_next_mid($subscription->sid)),
+    'status' => intval(MAILARCHIVE_MESSAGE_PUBLISHED),
+    'created' => intval(time()),
+    'received' => intval(time()), // TODO: use the mail header
+    'year' => intval(date('Y', time())), // TODO: use the mail header
+    'month' => intval(date('n', time())), // TODO: use the mail header
+    'day' => intval(date('j', time())), // TODO: use the mail header
+    'headers' => $header,
+    'message_id' => $message_id,
+    'reference' => $reference,
+    'in_reply_to' => $in_reply_to,
+    'thread_id' => intval($thread_id),
+    'sub_thread_id' => doubleval($sub_thread_id),
+    'addresses' => $addresses,
+    'mailfrom' => $mailfrom,
+    'subject' => _mailarchive_mime_decode($header->subject),
+    'body' => $body,
+    //'attachments' => $attachments,
+  );
+  $collection->insert($message);
+
+  $child = $collection->findOne(array('sid' => intval($subscription->sid), 'reference' => $message_id, 'year' => intval($year), 'month' => intval($month)), array('thread_id'));
+  if (!$child) {
+    $child = $collection->findOne(array('sid' => intval($subscription->sid), 'in_reply_to' => $message_id, 'year' => intval($year), 'month' => intval($month)), array('thread_id'));
   }
-  else if ($spans_month) {
-    // We're less than 7 days into the current months, so search all of this
-    // month and the previous month.
-    if ($node->dedicated_table) {
-      $child = db_fetch_object(db_query('SELECT thread_id FROM {'. $table ."} WHERE (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND year = %d AND (month = %d OR month = %d)", $message_id, $message_id, $year, $month, $month - 1));
-    }
-    else {
-      $child = db_fetch_object(db_query("SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND year = %d AND (month = %d OR month = %d)", $subscription->sid, $message_id, $message_id, $year, $month, $month - 1));
-    }
-  }
-  else {
-    // We're more than 7 days into the current month, so search only this
-    // month.  We're assuming that a message won't get lost for more than 7
-    // days.
-    if ($node->dedicated_table) {
-      $child = db_fetch_object(db_query('SELECT thread_id FROM {'. $table ."} WHERE (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND year = %d AND month = %d", $message_id, $message_id, $year, $month));
-    }
-    else {
-      $child = db_fetch_object(db_query("SELECT thread_id FROM {mailarchive_messages} WHERE sid = %d AND (reference LIKE '%%%s%%' OR in_reply_to LIKE '%%%s%%') AND year = %d AND month = %d", $subscription->sid, $message_id, $message_id, $year, $month));
-    }
-  }
-  
-  if ($child->thread_id) {
-    _mailarchive_rethread($subscription->sid, $child->thread_id);
+  if ($child) {
+    _mailarchive_rethread($subscription->sid, $child['thread_id']);
   }
 
-  return $mid;
+  return TRUE;
 }
 
 /**
@@ -1138,79 +1017,35 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
  *  The thread that needs to be rebuilt.
  */
 function _mailarchive_rethread($sid, $thread_id) {
-  $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
-  $node = node_load($node->nid);
-  $table = 'ma__'. str_replace('-', '_', $node->urlname);
-  // Find the parent of this thread, if it exists.
-  if ($node->dedicated_table) {
-    $parent = db_fetch_object(pager_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {'. $table ."} WHERE AND thread_id = $thread_id", 1));
-  }
-  else {
-    $parent = db_fetch_object(pager_query("SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = $sid AND thread_id = $thread_id", 1));
-  }
-  if (!$parent->mid) {
+  // connect to mongo
+  $collection = _mongo_connect();
+
+  $parent = $collection->findOne(array('sid' => intval($sid), 'thread_id' => intval($thread_id)), array('mid', 'message_id', 'reference', 'in_reply_to', 'thread_id', 'sub_thread_id'));
+  if (!$parent) {
     // No message exists with this thread_id, it must have been deleted 
     // underneath us.
     return;
   }
 
   $child = $parent;
-  while ($child->in_reply_to || $child->reference) {
-    if ($child->multiple_in_reply_to) {
-      $in_reply_to = explode(',', $child->in_reply_to);
-      foreach ($in_reply_to as $i) {
-        if ($node->dedicated_table) {
-          $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, year, month, day FROM {'. $table .'} WHERE thread_id = %d', $i));
-        }
-        else {
-          $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, year, month, day FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d', $sid, $i));
-        }
-        if ($parent->thread_id) {
-          // We've located the valid in_reply_to.
-          if ($node->dedicated_table) {
-            db_query('UPDATE {'. $table ."} SET in_reply_to = '%s', multiple_in_reply_to = 0 WHERE mid = %d", $i, $parent->mid);
-          }
-          else {
-            db_query("UPDATE {mailarchive_messages} SET in_reply_to = '%s', multiple_in_reply_to = 0 WHERE sid = %d AND mid = %d", $i, $sid, $parent->mid);
-          }
-          if (module_exists('mailarchive_cache')) {
-            mailarchive_cache_dirty(array('sid' => $sid, 'mid' => $parent->mid, 'thread_id' => $parent->thread_id, 'year' => $parent->year, 'month' => $parent->month, 'day' => $parent->day));
-          }
-          break;
-        }
+  if (is_array($child['in_reply_to']) && !empty($child['in_reply_to'])) {
+    foreach ($child['in_reply_to'] as $i) {
+      $parent = $collection->findOne(array('sid' => intval($sid), 'message_id' => $i), array('mid', 'message_id', 'reference', 'in_reply_to','thread_id', 'sub_thread_id', 'year', 'month', 'day'));
+      if ($parent) {
+        break;
       }
     }
-    elseif ($child->in_reply_to) {
-      if ($node->dedicated_table) {
-        $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, thread_id, sub_thread_id FROM {'. $table ."} WHERE message_id = '%s'", $child->in_reply_to));
-      }
-      else {
-        $parent = db_fetch_object(db_query("SELECT mid, message_id, reference, in_reply_to, thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id = '%s'", $sid, $child->in_reply_to));
-      }
-    }
-    else {  // $child->reference
-      if ($node->dedicated_table) {
-        $parent = db_fetch_object(db_query('SELECT mid, message_id, reference, in_reply_to, thread_id, sub_thread_id FROM {'. $table ."} WHERE message_id = '%s'", $child->reference));
-      }
-      else {
-        $parent = db_fetch_object(db_query("SELECT mid, message_id, reference, in_reply_to, thread_id, sub_thread_id FROM {mailarhive_messages} WHERE sid = %d AND message_id = '%s'", $sid, $child->reference));
-      }
-    }
-
-    if ($parent->message_id) {
-      // TODO: What's the point of this?  $child isn't used anywhere...
-      $child = $parent;
-    }
-    else {
-      // We found the top of the thread.
-      $parent = $child;
-      $child = NULL;
-    }
+  }
+  if (!$parent) {
+    $parent = $collection->findOne(array('sid' => intval($sid), 'message_id' => $child['in_reply_to']), array('mid', 'message_id', 'reference', 'in_reply_to','thread_id', 'sub_thread_id', 'year', 'month', 'day'));
+  }
+  if (!$parent) {
+    $parent = $collection->findOne(array('sid' => intval($sid), 'message_id' => $child['reference']), array('mid', 'message_id', 'reference', 'in_reply_to','thread_id', 'sub_thread_id', 'year', 'month', 'day'));
   }
 
   // Rebuild the entire thread, use the parent's thread_id and start with a
   // sub_thread_id of 1.
-  _mailarchive_rethread_recursive($sid, $parent->thread_id, '1', $parent);
+  _mailarchive_rethread_recursive($sid, $parent['thread_id'], '1', $parent);
 }
 
 /**
@@ -1228,11 +1063,7 @@ function _mailarchive_rethread($sid, $thread_id) {
 function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $parent) {
   static $history = array();
 
-  $node = db_fetch_object(db_query('SELECT nid FROM {mailarchive_subscriptions} WHERE sid = %d', $sid));
-  $node = node_load($node->nid);
-  $table = 'ma__'. str_replace('-', '_', $node->urlname);
-
-  if ($history[$parent->mid] == $sub_thread_id) {
+  if (isset($history[$parent->mid]) && $history[$parent->mid] == $sub_thread_id) {
     // There's something wrong with this thread, it's pointing back to itself,
     // we exit now as there's no good algorithm for threading an infinite loop.
     return;
@@ -1241,53 +1072,35 @@ function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $pare
     $history[$parent->mid] = $sub_thread_id;
   }
 
-  if ($node->dedicated_table) {
-    db_query('UPDATE {'. $table .'} SET thread_id = %d, sub_thread_id = "%s/" WHERE message_id = "%s"', $thread_id, $sub_thread_id, $parent->message_id);
-  }
-  else {
-    db_query('UPDATE {mailarchive_messages} SET thread_id = %d, sub_thread_id = "%s/" WHERE sid = %d AND message_id = "%s"', $thread_id, $sub_thread_id, $sid, $parent->message_id);
-  }
-  if (module_exists('mailarchive_cache')) {
-    mailarchive_cache_dirty(array('sid' => $sid, 'mid' => $parent->mid, 'thread_id' => $thread_id, 'year' => $parent->year, 'month' => $parent->month, 'day' => $parent->day));
-  }
+  // connect to mongo
+  $collection = _mongo_connect();
+
+  $collection->update(array('sid' => $sid, 'message_id' => $parent['message_id']), array('thread_id' => $thread_id, 'sub_thread_id' => $sub_thread_id));
 
   watchdog('mailarchive', "Finding children of: " . $sid);
   // Find all children of the current parent.
   $parent_subid = $sub_thread_id;
   $sub_thread_id = $sub_thread_id .'.1';
   $match = FALSE;
-  if ($node->dedicated_table) {
-    $queries = array('SELECT mid, message_id FROM {'. $table ."} WHERE reference LIKE '%%%s%%'", 'SELECT mid, message_id FROM {'. $table ."} WHERE in_reply_to LIKE '%%%s%%'");
+  $cursor = $collection->find(array('sid' => intval($sid), 'reference' => $parent['message_id']), array('mid', 'message_id'));
+  if (!$cursor) {
+    $cursor = $collection->find(array('sid' => intval($sid), 'in_reply_to' => $parent['message_id']), array('mid', 'message_id'));
   }
-  else {
-    $queries = array("SELECT mid, message_id FROM {mailarchive_messages} WHERE sid = %d AND reference LIKE '%%%s%%'", "SELECT mid, message_id FROM {mailarchive_messages} WHERE sid = %d AND in_reply_to LIKE '%%%s%%'");
-  }
-  foreach ($queries as $sql) {
-    if ($node->dedicated_table) {
-      $result = db_query($sql, $parent->message_id);
-    }
-    else {
-      $result = db_query($sql, $sid, $parent->message_id);
-    }
-    // Rethread all children of the current parent.
-    while ($child = db_fetch_object($result)) {
-      $match = TRUE;
-      _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $child);
-      $parts = explode('.', $sub_thread_id);
-      $parent_depth = count(explode('.', $parent_subid));
-      $last = $parts[$parent_depth];
+  while ($cursor->hasNext()) {
+    $child = $cursor->getNext();
+    _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $child);
+    // TODO: Why are we calculating this information when it's too late?  Can we delete this, or do we need to
+    // move the call to _mailarchive_rethread_recursive()?
+    $parts = explode('.', $sub_thread_id);
+    $parent_depth = count(explode('.', $parent_subid));
+    $last = $parts[$parent_depth];
 
-      $decimals = (string)substr($last, 0, strlen($last) - 1);
-      $units = substr($last, -1, 1) + 1;
-      if ($units == 10) {
-        $units = '90';
-      }
-      $sub_thread_id = "$parent_subid.". $decimals.$units;
+    $decimals = (string)substr($last, 0, strlen($last) - 1);
+    $units = substr($last, -1, 1) + 1;
+    if ($units == 10) {
+      $units = '90';
     }
-    if ($match) {
-      // we found the children, we're finished
-      break;
-    }
+    $sub_thread_id = "$parent_subid.". $decimals.$units;
   }
 }
 
@@ -1556,8 +1369,6 @@ function _mailarchive_fetch($sid) {
     }
     for ($message = 1; $message <= $messages_to_download; $message++) {
       $header = imap_headerinfo($stream, $message);
-/*
-  TODO: Make this configurable.
       if ($header->Unseen != 'U' && $header->Recent != 'N') {
         if ($subscription->delete_read) {
           // Mark message for deletion.
@@ -1568,8 +1379,6 @@ function _mailarchive_fetch($sid) {
       }
       // Save the message.
       elseif (_mailarchive_message_save($subscription, $stream, $header, $message)) {
-*/
-      if (_mailarchive_message_save($subscription, $stream, $header, $message)) {
         $messages_downloaded++;
         if ($subscription->delete_read) {
           // Mark message for deletion.
@@ -1595,265 +1404,30 @@ function _mailarchive_fetch($sid) {
 }
 
 /**
- * Create/delete dedicated table, move messages as necessary.
+ * Mongo help functions -- should be turned into a generic abstraction layer.
  */
-function mailarchive_validate_dedicated_table($node) {
-  if (isset($node->dedicated_table) && $node->dedicated_table) {
-    // archive configured to have a dedicated table
-    $table = 'ma__'. str_replace('-', '_', $node->urlname);
-    if (!db_table_exists($table)) {
-      $schema = array(
-        'description' => t('A dedicated mailarchive table.'),
-        'fields' => array(
-          'mid' => array(
-            'type' => 'serial',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-          ),
-          'status' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'created' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'received' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'year' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'month' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'day' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'headers' => array(
-            'type' => 'text',
-          ),
-          'message_id' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'reference' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'in_reply_to' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'multiple_in_reply_to' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'thread_id' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'sub_thread_id' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'mailfrom' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'subject' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'body' => array(
-            'type' => 'text',
-          ),
-          'attachments' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'attachments_path' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-        ),
-        'indexes' => array(
-          'status' => array('status'),
-          'created' => array('created'),
-          'received' => array('received'),
-          'year' => array('year', 'month', 'thread_id'),
-          'month' => array('month', 'year', 'thread_id'),
-          'day' => array('day'),
-          'thread_id' => array('thread_id'),
-          'sub_thread_id' => array('sub_thread_id'),
-          'subject' => array('subject'),
-        ),
-        'unique keys' => array(
-          'message_id' => array('message_id'),
-        ),
-        'primary key' => array('mid'),
-      );
-      $ret = array();
-      db_create_table($ret, $table, $schema);
-      $subtable = $table .'_addresses';
-      $schema = array(
-        'description' => t('A dedicated mailarchive table.'),
-        'fields' => array(
-          'aid' => array(
-            'type' => 'serial',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-          ),
-          'mid' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'name' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'mailbox' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'host' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'address' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'address_type' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-        ),
-        'indexes' => array(
-          'mid' => array('mid', 'host'),
-        ),
-        'primary key' => array('aid'),
-      );
-      db_create_table($ret, $subtable, $schema);
-      $subtable2 = $table .'_attachments';
-      $schema = array(
-        'description' => t('A dedicated mailarchive table.'),
-        'fields' => array(
-          'aid' => array(
-            'type' => 'serial',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-          ),
-          'mid' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'name' => array(
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => TRUE,
-            'default' => '',
-          ),
-          'bytes' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-          'part' => array(
-            'type' => 'int',
-            'unsigned' => TRUE,
-            'not null' => TRUE,
-            'default' => 0,
-          ),
-        ),
-        'indexes' => array(
-          'mid' => array('mid'),
-        ),
-        'primary key' => array('aid'),
-      );
-      db_create_table($ret, $subtable2, $schema);
-      ini_set('max_execution_time', 0);
-      drupal_set_message(t('Created tables: %table, %subtable1, %subtable2', array('%table' => $table, '%subtable1' => $subtable, '%subtable2' => $subtable2)));
-      $sid = (int)db_result(db_query("SELECT sid FROM {mailarchive_subscriptions} WHERE urlname = '%s'", $node->urlname));
-      $result = db_query('SELECT * FROM {mailarchive_messages} WHERE sid = %d', $sid);
-      $counter = 0;
-      while ($message = db_fetch_object($result)) {
-        $counter++;
-        db_query('INSERT INTO {'. $table ."} (mid, status, created, received, year, month, day, headers, message_id, reference, in_reply_to, multiple_in_reply_to, thread_id, sub_thread_id, mailfrom, subject, body, attachments, attachments_path) VALUES(%d, %d, %d, %d, %d, %d, %d, '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', '%s', '%s', %d, '%s')", $message->mid, $message->status, $message->created, $message->received, $message->year, $message->month, $message->day, $message->headers, $message->message_id, $message->reference, $message->in_reply_to, $message->multiple_in_reply_to, $message->thread_id, $message->sub_thread_id, $message->mailfrom, $message->subject, $message->body, $message->attachments, $message->attachments_path);
-      }
-      if ($counter) {
-        $result = db_query('SELECT * FROM {mailarchive_messages_addresses} WHERE sid = %d', $sid);
-        while ($address = db_fetch_object($result)) {
-          db_query('INSERT INTO {'. $subtable ."} (mid, name, mailbox, host, address, address_type) VALUES (%d, '%s', '%s', '%s', '%s', '%s')", $address->mid, $address->name, $address->mailbox, $address->host, $address->address, $address->address_type);
-        }
-        $result = db_query('SELECT * FROM {mailarchive_messages_attachments} WHERE sid = %d', $sid);
-        while ($attachment = db_fetch_object($result)) {
-          db_query('INSERT INTO {'. $subtable2 ."} (mid, name, bytes, part) VALUES (%d, '%s', %d, %d)", $attachment->mid, $attachment->name, $attachment->bytes, $attachment->part);
-        }
-        drupal_set_message(t('Moved %count messages.', array('%count' => $counter)));
-        db_query('DELETE FROM {mailarchive_messages} WHERE sid = %d', $sid);
-        db_query('DELETE FROM {mailarchive_messages_addresses} WHERE sid = %d', $sid);
-        db_query('DELETE FROM {mailarchive_messages_attachments} WHERE sid = %d', $sid);
-        // TODO: Do this in a database agnostic way.
-        $max = db_result(db_query('SELECT MAX(mid) FROM {'. $table .'}'));
-        db_query('ALTER TABLE {'. $table .'} AUTO_INCREMENT = '. ++$max);
-      }
-    }
+function _mongo_init($instance = 'default') {
+  static $connection = array();
+  if (!isset($connection[$instance])) {
+    $connection[$instance] = new Mongo();
   }
-  else {
-    // archive configured to not have a dedicated table
-  }
+  return $connection[$instance];
 }
 
-?>
+function _mongo_connect($database = 'mailarchive', $collection = 'messages') {
+  static $db = array();
+  $connection = _mongo_init();
+  if (!isset($db[$database])) {
+    $db[$database] = $connection->selectDB($database);
+  }
+  return $db[$database]->selectCollection($collection);
+}
+
+function _mailarchive_next_mid($sid) {
+  $collection = _mongo_connect('mailarchive', 'mids');
+  // MONGO-TODO: lock these operations
+  $rc = $collection->update(array('_id' => intval($sid)), array('$inc' => array('mid' => intval(1))), TRUE);
+  $current = $collection->findOne(array('_id' => intval($sid)));
+  // MONGO-TODO: unlock
+  return $current['mid'];
+}
