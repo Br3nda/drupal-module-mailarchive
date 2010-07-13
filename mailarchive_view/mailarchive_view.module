@@ -377,10 +377,10 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
     $header = array(t('Year'), t('Messages'));
     if ($node->dedicated_table) {
       $table = 'ma__'. str_replace('-', '_', $node->urlname);
-      $result = db_query('SELECT COUNT(year) AS messages, year FROM {'. $table .'} WHERE status = %d GROUP BY year DESC', MAILARCHIVE_MESSAGE_PUBLISHED);
+      $result = db_query('SELECT COUNT(year) AS messages, year FROM {'. $table .'} WHERE status = %d GROUP BY year ORDER BY year DESC', MAILARCHIVE_MESSAGE_PUBLISHED);
     }
     else {
-      $result = db_query('SELECT COUNT(year) AS messages, year FROM {mailarchive_messages} WHERE sid = %d AND status = %d GROUP BY year DESC', $sid, MAILARCHIVE_MESSAGE_PUBLISHED);
+      $result = db_query('SELECT COUNT(year) AS messages, year FROM {mailarchive_messages} WHERE sid = %d AND status = %d GROUP BY year ORDER BY year DESC', $sid, MAILARCHIVE_MESSAGE_PUBLISHED);
     }
     while ($list = db_fetch_object($result)) {
       $row = array();
@@ -395,10 +395,10 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
     $header = array(t('Month'), t('Messages'));
     if ($node->dedicated_table) {
       $table = 'ma__'. str_replace('-', '_', $node->urlname);
-      $result = db_query('SELECT COUNT(month) AS messages, month FROM {'. $table .'} WHERE year = %d AND status = %d GROUP BY month DESC', $year, MAILARCHIVE_MESSSAGE_PUBLISHED);
+      $result = db_query('SELECT COUNT(month) AS messages, month FROM {'. $table .'} WHERE year = %d AND status = %d GROUP BY month ORDER BY month DESC', $year, MAILARCHIVE_MESSSAGE_PUBLISHED);
     }
     else {
-      $result = db_query('SELECT COUNT(month) AS messages, month FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND status = %d GROUP BY month DESC', $sid, $year, MAILARCHIVE_MESSSAGE_PUBLISHED);
+      $result = db_query('SELECT COUNT(month) AS messages, month FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND status = %d GROUP BY month ORDER BY month DESC', $sid, $year, MAILARCHIVE_MESSSAGE_PUBLISHED);
     }
     while ($list = db_fetch_object($result)) {
       $row = array();
@@ -413,10 +413,10 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
     $header = array(t('Day'), t('Messages'));
     if ($node->dedicated_table) {
       $table = 'ma__'. str_replace('-', '_', $node->urlname);
-      $result = db_query('SELECT COUNT(day) AS messages, day FROM {'. $table .'} WHERE year = %d AND month = %d AND status = %d GROUP BY day DESC', $year, $month, MAILARCHIVE_MESSAGE_PUBLISHED);
+      $result = db_query('SELECT COUNT(day) AS messages, day FROM {'. $table .'} WHERE year = %d AND month = %d AND status = %d GROUP BY day ORDER BY day DESC', $year, $month, MAILARCHIVE_MESSAGE_PUBLISHED);
     }
     else {
-      $result = db_query('SELECT COUNT(day) AS messages, day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND status = %d GROUP BY day DESC', $sid, $year, $month, MAILARCHIVE_MESSAGE_PUBLISHED);
+      $result = db_query('SELECT COUNT(day) AS messages, day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND status = %d GROUP BY day ORDER BY day DESC', $sid, $year, $month, MAILARCHIVE_MESSAGE_PUBLISHED);
     }
     while ($list = db_fetch_object($result)) {
       $row = array();
@@ -594,10 +594,10 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
   // Get list of messages in current group.
   if ($thread) {
     if ($node->dedicated_table) {
-      $sql = 'SELECT mid, received, year, month, day, subject, mailfrom, thread_id FROM {'. $table ."} WHERE $sql_range AND status = ". MAILARCHIVE_MESSAGE_PUBLISHED .' GROUP BY thread_id';
+      $sql = 'SELECT mid, received, year, month, day, subject, mailfrom, thread_id FROM {'. $table ."} WHERE $sql_range AND status = ". MAILARCHIVE_MESSAGE_PUBLISHED .' GROUP BY thread_id, mid, received, year, month, day, subject, mailfrom, sub_thread_id';
     }
     else {
-      $sql = "SELECT mid, received, year, month, day, subject, mailfrom, thread_id FROM {mailarchive_messages} WHERE $sql_range AND sid = $sid AND status = ". MAILARCHIVE_MESSAGE_PUBLISHED .' GROUP BY thread_id';
+      $sql = "SELECT mid, received, year, month, day, subject, mailfrom, thread_id FROM {mailarchive_messages} WHERE $sql_range AND sid = $sid AND status = ". MAILARCHIVE_MESSAGE_PUBLISHED .' GROUP BY thread_id, mid, received, year, month, day, subject, mailfrom, thread_id, sub_thread_id';
     }
     $sql .= tablesort_sql($header) .', sub_thread_id DESC';
     if ($node->dedicated_table) {
@@ -693,7 +693,7 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
   $output .= theme('table', $header, $rows);
   $output .= theme('pager', NULL, $messages_per_page, 0, NULL);
 
-  $output .= theme('table', array(t('previous day'), t('today'), t('next day')), array(array(mailarchive_view_day_nav($mailarchive, $year, $month, $day, '<'), mailarchive_view_format_month($month) ." $day, $year", mailarchive_view_day_nav($mailarchive, $year, $month, $day, '>'))));
+  $output .= theme('table', array(t('previous day'), t('displayed day'), t('next day')), array(array(mailarchive_view_day_nav($mailarchive, $year, $month, $day, '<'), mailarchive_view_format_month($month) ." $day, $year", mailarchive_view_day_nav($mailarchive, $year, $month, $day, '>'))));
 
   $output .= '</div></div>';
   $additions = module_invoke_all('mailarchive_api', 'view thread', $mailarchive, $year, $month, $day);
@@ -722,7 +722,7 @@ function mailarchive_view_day_nav($mailarchive, $year, $month, $day, $op) {
   }
   $sid = _mailarchive_sid($mailarchive);
   // Start with a quick search in the same month.
-  $found = db_result(db_query("SELECT day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day $op %d AND status = %d GROUP BY day $order LIMIT 1", $sid, $year, $month, $day, MAILARCHIVE_MESSAGE_PUBLISHED));
+  $found = db_result(db_query("SELECT day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day $op %d AND status = %d GROUP BY day ORDER BY day $order LIMIT 1", $sid, $year, $month, $day, MAILARCHIVE_MESSAGE_PUBLISHED));
   if (!$found) {
     // Try another quick search
     if ($op == '<') {
@@ -745,7 +745,7 @@ function mailarchive_view_day_nav($mailarchive, $year, $month, $day, $op) {
         $year2 = $year + 1;
       }
     }
-    $found = db_result(db_query("SELECT day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day $op %d AND status = %d GROUP BY day $order LIMIT 1", $sid, $year2, $month2, $day, MAILARCHIVE_MESSAGE_PUBLISHED));
+    $found = db_result(db_query("SELECT day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month = %d AND day $op %d AND status = %d GROUP BY day ORDER BY day $order LIMIT 1", $sid, $year2, $month2, $day, MAILARCHIVE_MESSAGE_PUBLISHED));
     if (!$found) {
       // Quick searches aren't working, expand our search.
       $found = db_fetch_object(db_query("SELECT year, month, day FROM {mailarchive_messages} WHERE sid = %d AND year = %d AND month $op %d AND status = %d ORDER BY month $order, day $order LIMIT 1", $sid, $year2, $month2, MAILARCHIVE_MESSAGE_PUBLISHED));
