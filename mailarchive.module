@@ -939,10 +939,10 @@ function _mailarchive_message_save($subscription, $stream, $header, $message) {
       // TODO: This one is going to be expensive... we should query a smaller section first, then slowly expand.
       drupal_set_message('TODO: We hit an expensive query, optimize it! A22C');
       if ($node->dedicated_table) {
-        $parent = db_fetch_object(db_query("SELECT thread_id, sub_thread_id FROM {". $table. "} WHERE message_id LIKE '%%%s%%'", $reference));
+        $parent = db_fetch_object(db_query('SELECT thread_id, sub_thread_id FROM {'. $table .'} WHERE message_id LIKE "%%%s%%"', $reference));
       }
       else {
-        $parent = db_fetch_object(db_query("SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id LIKE '%%%s%%'", $subscription->sid, $reference));
+        $parent = db_fetch_object(db_query('SELECT thread_id, sub_thread_id FROM {mailarchive_messages} WHERE sid = %d AND message_id LIKE "%%%s%%"', $subscription->sid, $reference));
       }
     }
   }
@@ -1242,10 +1242,10 @@ function _mailarchive_rethread_recursive($sid, $thread_id, $sub_thread_id, $pare
   }
 
   if ($node->dedicated_table) {
-    db_query("UPDATE {". $table ."} SET thread_id = %d, sub_thread_id = '%s/' WHERE message_id = '%s'", $thread_id, $sub_thread_id, $parent->message_id);
+    db_query('UPDATE {'. $table .'} SET thread_id = %d, sub_thread_id = "%s/" WHERE message_id = "%s"', $thread_id, $sub_thread_id, $parent->message_id);
   }
   else {
-    db_query("UPDATE {mailarchive_messages} SET thread_id = %d, sub_thread_id = '%s/' WHERE sid = %d AND message_id = '%s'", $thread_id, $sub_thread_id, $sid, $parent->message_id);
+    db_query('UPDATE {mailarchive_messages} SET thread_id = %d, sub_thread_id = "%s/" WHERE sid = %d AND message_id = "%s"', $thread_id, $sub_thread_id, $sid, $parent->message_id);
   }
   if (module_exists('mailarchive_cache')) {
     mailarchive_cache_dirty(array('sid' => $sid, 'mid' => $parent->mid, 'thread_id' => $thread_id, 'year' => $parent->year, 'month' => $parent->month, 'day' => $parent->day));
@@ -1528,10 +1528,6 @@ function _mailarchive_fetch($sid) {
   }
 
   // Make a connection to the mail server.
-  if (!function_exists('imap_open')) {
-    drupal_set_message(t('Cannot connect to imap server. php5-imap is not installed'), 'error');
-    return;
-  }
   $stream = imap_open($connect, $username, $password);
   if ($stream === FALSE) {
     drupal_set_message(t('Failed to download messages for <em>%list</em>, connection to mail server failed.  Please verify your mailing list archive configuration.', array('%server' => $subscription->server_name, '%list' => $subscription->title)), 'error');
