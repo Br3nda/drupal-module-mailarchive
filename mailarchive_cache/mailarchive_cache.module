@@ -123,8 +123,8 @@ function mailarchive_cache_dirty($keys = array()) {
 function mailarchive_cache_cron() {
   // Delete cache entries that have been dirty more than 10 minutes.  They're
   // low traffic items, and are just taking up space/memory.
-  db_query('DELETE {cache_mailarchive_overview} WHERE dirty = %d AND timestamp < %d', MAILARCHIVE_CACHE_DIRTY, time() - 86400);
-  db_query('DELETE {cache_mailarchive_message} WHERE dirty = %d AND timestamp < %d', MAILARCHIVE_CACHE_DIRTY, time() - 86400);
+  db_query('DELETE FROM {cache_mailarchive_overview} WHERE dirty = %d AND timestamp < %d', MAILARCHIVE_CACHE_DIRTY, time() - 86400);
+  db_query('DELETE FROM {cache_mailarchive_message} WHERE dirty = %d AND timestamp < %d', MAILARCHIVE_CACHE_DIRTY, time() - 86400);
 }
 
 /**
