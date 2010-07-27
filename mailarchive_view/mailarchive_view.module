@@ -693,7 +693,7 @@ function theme_mailarchive_view_thread($mailarchive, $year = NULL, $month = NULL
   $output .= theme('table', $header, $rows);
   $output .= theme('pager', NULL, $messages_per_page, 0, NULL);
 
-  $output .= theme('table', array(t('previous day'), t('displayed day'), t('next day')), array(array(mailarchive_view_day_nav($mailarchive, $year, $month, $day, '<'), mailarchive_view_format_month($month) ." $day, $year", mailarchive_view_day_nav($mailarchive, $year, $month, $day, '>'))));
+  $output .= theme('table', array(t('previous day'), t('today'), t('next day')), array(array(mailarchive_view_day_nav($mailarchive, $year, $month, $day, '<'), mailarchive_view_format_month($month) ." $day, $year", mailarchive_view_day_nav($mailarchive, $year, $month, $day, '>'))));
 
   $output .= '</div></div>';
   $additions = module_invoke_all('mailarchive_api', 'view thread', $mailarchive, $year, $month, $day);
@@ -832,10 +832,10 @@ function mailarchive_view_next_thread($mailarchive, $message, $op) {
   }
   if (!isset($messages[$thread_id])) {
     if ($node->dedicated_table) {
-      $new_message = db_fetch_object(db_query('SELECT MIN(mid), mid, year, month, day, received, subject, mailfrom, thread_id FROM {'. $table .'} WHERE thread_id = %d AND status = %d GROUP BY mid', $thread_id, MAILARCHIVE_MESSAGE_PUBLISHED));
+      $new_message = db_fetch_object(db_query('SELECT MIN(mid), mid, year, month, day, received, subject, mailfrom, thread_id FROM {'. $table .'} WHERE thread_id = %d AND status = %d GROUP BY mid, year, month, day, received, subject, mailfrom, thread_id, sid', $thread_id, MAILARCHIVE_MESSAGE_PUBLISHED));
     }
     else {
-      $new_message = db_fetch_object(db_query('SELECT MIN(mid), sid, mid, year, month, day, received, subject, mailfrom, thread_id FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND status = %d GROUP BY mid', $message->sid, $thread_id, MAILARCHIVE_MESSAGE_PUBLISHED));
+      $new_message = db_fetch_object(db_query('SELECT MIN(mid), sid, mid, year, month, day, received, subject, mailfrom, thread_id FROM {mailarchive_messages} WHERE sid = %d AND thread_id = %d AND status = %d GROUP BY mid, year, month, day, received, subject, mailfrom, thread_id, sid', $message->sid, $thread_id, MAILARCHIVE_MESSAGE_PUBLISHED));
     }
     if ($new_message->mid) {
       if ($node->dedicated_table) {
