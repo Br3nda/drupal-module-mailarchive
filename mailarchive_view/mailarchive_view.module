@@ -406,7 +406,7 @@ function mailarchive_view_mailarchive_overview($mailarchive, $year = NULL, $mont
   }
   else {
     _mailarchive_view_set_breadcrumb($sid, 1, $year);
-    drupal_set_title(t("!list mailing list", array('!list' => $mailarchive, '!year' => $year, '!month' => mailarchive_view_format_month($month))));
+    drupal_set_title(t("!list mailing list", array('!list' => $mailarchive)));
     $header = array(t('Day'), t('Messages'));
     if ($node->dedicated_table) {
       $table = 'ma__'. str_replace('-', '_', $node->urlname);
