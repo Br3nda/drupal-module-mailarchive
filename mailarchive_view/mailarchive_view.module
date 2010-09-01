@@ -21,9 +21,6 @@ function mailarchive_view_perm() {
 /**
  * Drupal _menu hook. 
  *
- * @param $may_cache
- *  A boolean that's either TRUE or FALSE
- *
  * @return
  *  An array of menu items.
  */
