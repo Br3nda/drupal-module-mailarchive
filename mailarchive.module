@@ -1528,6 +1528,11 @@ function _mailarchive_fetch($sid) {
   }
 
   // Make a connection to the mail server.
+  if (!function_exists('imap_open')) {
+    drupal_set_message(t('PHP Imap extensions are missing. These must be enabled before the mailarachive module can read imap'), 'error');
+    watchdog('mailarchive', t('PHP Imap extensions are missing. These must be enabled before the mailarachive module can read imap'), array(), WATCHDOG_ERROR);
+     return;
+  }
   $stream = imap_open($connect, $username, $password);
   if ($stream === FALSE) {
     drupal_set_message(t('Failed to download messages for <em>%list</em>, connection to mail server failed.  Please verify your mailing list archive configuration.', array('%server' => $subscription->server_name, '%list' => $subscription->title)), 'error');
