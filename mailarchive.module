@@ -1860,5 +1860,3 @@ function mailarchive_validate_dedicated_table($node) {
     // archive configured to not have a dedicated table
   }
 }
-
-?>
