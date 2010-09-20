@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive_stats.install,v 1.1.4.1 2009/07/22 02:51:57 jeremy Exp $
+// $Id: mailarchive_stats.install,v 1.1.4.2 2010/09/20 22:44:06 taniwha Exp $
 
 /**
  * Mailarchive Statistics module database schema.
@@ -7,36 +7,37 @@
  * All rights reserved.
  */
 function mailarchive_stats_install() {
-  switch ($GLOBALS['db_type']) {
-    case 'mysql':
-    case 'mysqli':
-    default:
-      db_query("CREATE TABLE {mailarchive_statistics} (
-        msid INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
-        mid INT(11) UNSIGNED NOT NULL DEFAULT '0',
+  drupal_install_schema('mailarchive_stats');
+}
 
-        date INT(10) UNSIGNED NOT NULL DEFAULT '0',
-        count INT(11) UNSIGNED NOT NULL DEFAULT '0',
-
-        sid INT(11) UNSIGNED NOT NULL DEFAULT '0',
-        thread_id INT(11) UNSIGNED NOT NULL DEFAULT '0',
-        year INT(4) UNSIGNED NOT NULL DEFAULT '0',
-        month INT(4) UNSIGNED NOT NULL DEFAULT '0',
-        day INT(4) UNSIGNED NOT NULL DEFAULT '0',
-
-        PRIMARY KEY  (msid),
-        KEY (sid),
-        KEY (mid),
-        KEY (year),
-        KEY (month),
-        KEY (day),
-        KEY (date)
-      );");
-  }
+function mailarchive_stats_schema() {
+  $schema['mailarchive_statistics'] = array(
+    'fields' => array(
+        'msid' => array('type' => 'serial'),
+        'mid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+        'date' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+        'count' => array('type' => 'int','unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+        'sid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+        'thread_id' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+        'year' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+        'month' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+        'day' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      ),
+      'primary key' => array('msid'),
+      'indexes' => array(
+        'sid' => array('sid'),
+        'mid' => array('mid'),
+        'year' => array('year'),
+        'month' => array('month'),
+        'day' => array('day'),
+        'month' => array('date'),
+      )
+      );
+  return $schema;
 }
 
 function mailarchive_stats_uninstall() {
-  db_query('DROP TABLE {mailarchive_statistics}');
+  drupal_uninstall_schema('mailarchive_stats');
 }
 
 /**
