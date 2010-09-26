@@ -1,5 +1,5 @@
 <?php
-// $Id: mailarchive.install,v 1.12.4.4 2010/07/13 22:32:31 taniwha Exp $
+// $Id: mailarchive.install,v 1.12.4.5 2010/09/26 22:33:48 taniwha Exp $
 
 /**
  * Mailarchive module database schema.
@@ -53,13 +53,13 @@ function mailarchive_schema() {
         'sub_thread_id' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE,),
         'mailfrom' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE,),
         'subject' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE,'default' => 0),
-        'body' => array('type'=> 'text', 'not null' => TRUE,'default' => 0),
+        'body' => array('type'=> 'text', 'not null' => TRUE),
         'attachments' => array('type'=> 'int', 'not null' => TRUE, 'unsigned' => TRUE, 'default' => 0),
         'attachments_path' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE,'default' => 0),
     ),
     'primary keys' => array('mid'),
     'unique keys' => array(
-      'sid_message_id' => array('sid', 'message_id'),
+      'sid_message_id' => array('mid', 'sid', 'message_id'),
     ),
     'indexes' => array(
       'mailarchive_messages_status' => array('status'),
@@ -104,7 +104,7 @@ function mailarchive_schema() {
         'mailbox' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE,),
         'host' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE,),
         'address' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => '0'),
-        'address_type' => array('type'=> 'varchar', 'length' => 255, 'not null' => TRUE,),
+        'address_type' => array('type'=> 'varchar', 'length' => 64, 'not null' => TRUE,),
       ),
       'primary key' => array('aid'),
       'unique keys' => array(
